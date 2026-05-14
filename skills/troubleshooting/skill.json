@@ -1,0 +1,20 @@
+{
+  "name": "Troubleshooting",
+  "description": "Guides the agent through structured troubleshooting workflows for common technical issues.",
+  "version": "1.0.0",
+  "tags": ["troubleshooting", "support"],
+  "nodes": [
+    {
+      "id": "identify_problem",
+      "description": "Identify and categorize the reported problem"
+    },
+    {
+      "id": "gather_context",
+      "description": "Gather relevant context and diagnostic information"
+    },
+    {
+      "id": "propose_solution",
+      "description": "Propose and validate a solution"
+    }
+  ]
+}
