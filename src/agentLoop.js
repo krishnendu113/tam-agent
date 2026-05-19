@@ -201,15 +201,17 @@ export function skillRouterNode(state) {
 }
 
 /**
- * Multi-node execution path (stub).
- * Will be implemented in task 6.1.
+ * Multi-node execution path.
+ * Loads available tools based on preflight toolTags and prepares state for synthesis.
  *
  * @param {AgentState} state - Current agent state
  * @param {CallbackInterface} callbacks - SSE event emitters
- * @returns {Promise<AgentState>} Updated state
+ * @returns {Promise<AgentState>} Updated state with availableTools
  */
 export async function multiNodePath(state, callbacks) {
-  return state;
+  // Load tools based on preflight classification toolTags
+  const toolDefs = getToolDefinitions(state.toolTags);
+  return { ...state, availableTools: toolDefs };
 }
 
 /**
@@ -698,7 +700,10 @@ export async function runAgentLoop(state, callbacks) {
       }
     }
 
-    // 6. Synthesis phase
+    // 6. Synthesis phase — ensure tools are available
+    if (!state.availableTools || state.availableTools.length === 0) {
+      state = { ...state, availableTools: getToolDefinitions(state.toolTags) };
+    }
     callbacks.onPhase('synthesis');
     state = await synthesisLoop(state, callbacks);
 
