@@ -1,6 +1,6 @@
 # TAM Agent
 
-A Technical Account Manager AI agent powered by AWS Bedrock and a custom async state machine. Built to assist with technical support, troubleshooting, and knowledge retrieval across Jira, Confluence, documentation, and web sources.
+A Technical Account Manager AI agent powered by AWS Bedrock and a custom async state machine. The agent researches across Jira, Confluence, documentation, and the web to answer technical support questions with real-time streaming responses.
 
 ## Architecture
 
@@ -10,47 +10,42 @@ A Technical Account Manager AI agent powered by AWS Bedrock and a custom async s
 ├─────────────────────────────────────────────────────────┤
 │                     Agent Loop                           │
 │  ┌──────────┐  ┌───────────┐  ┌────────┐  ┌─────────┐ │
-│  │ Preflight│→ │Skill Load │→ │ Router │→ │Synthesis│ │
-│  │   Gate   │  │  + Route  │  │Research│  │  Loop   │ │
+│  │ Preflight│→ │Skill Load │→ │ Router │→ │Research │ │
+│  │   Gate   │  │  + Route  │  │        │  │Dispatch │ │
 │  └──────────┘  └───────────┘  └────────┘  └─────────┘ │
+│                                                 ↓        │
+│                                          ┌───────────┐  │
+│                                          │ Synthesis  │  │
+│                                          │   Loop     │  │
+│                                          └───────────┘  │
 ├─────────────────────────────────────────────────────────┤
-│                  LLM Abstraction Layer                    │
-│         createMessage() · streamMessage()                │
+│              LLM Abstraction Layer (src/llm.js)          │
 ├─────────────────────────────────────────────────────────┤
-│              AWS Bedrock Runtime Client                   │
-│         Claude Sonnet · Claude Haiku                     │
+│              AWS Bedrock Runtime (Claude)                 │
 └─────────────────────────────────────────────────────────┘
 ```
 
 **Key design decisions:**
-- No framework dependencies — LangGraph replaced with an explicit async state machine (~200 lines vs ~2MB of dependencies)
-- Provider-agnostic LLM interface — all Bedrock specifics isolated in `src/llm.js`
-- Streaming-first — SSE events delivered in real-time via callback interface
-- Property-based testing — correctness properties verified with fast-check
+- No LangGraph/LangChain — custom state machine is simpler to debug and deploy
+- Provider-agnostic LLM interface — swap Bedrock for any provider by changing `src/llm.js`
+- Streaming-first — SSE delivers real-time tokens, tool status, and phase transitions to the client
 
 ## Quick Start
 
 ### Prerequisites
 
-- Node.js >= 20
-- AWS credentials configured (IAM role, env vars, or shared credentials file)
+- Node.js 20+
+- AWS account with Bedrock access (Claude Sonnet + Haiku models enabled)
 - MongoDB (optional, for persistence)
 
 ### Setup
 
 ```bash
-# Install dependencies
+git clone https://github.com/krishnendu113/tam-agent.git
+cd tam-agent
 npm install
-
-# Configure environment
 cp .env.example .env
 # Edit .env with your AWS region and model IDs
-
-# Run tests
-npm test
-
-# Start the server
-npm start
 ```
 
 ### Environment Variables
@@ -58,123 +53,276 @@ npm start
 | Variable | Description | Example |
 |----------|-------------|---------|
 | `AWS_REGION` | AWS region for Bedrock | `us-east-1` |
-| `BEDROCK_SONNET_MODEL_ID` | Model ID for Sonnet (primary) | `anthropic.claude-sonnet-4-20250514-v1:0` |
-| `BEDROCK_HAIKU_MODEL_ID` | Model ID for Haiku (fast/cheap) | `anthropic.claude-haiku-4-5-20251001-v1:0` |
+| `BEDROCK_SONNET_MODEL_ID` | Bedrock model ID for Sonnet | `anthropic.claude-sonnet-4-20250514-v1:0` |
+| `BEDROCK_HAIKU_MODEL_ID` | Bedrock model ID for Haiku | `anthropic.claude-haiku-4-5-20251001-v1:0` |
 | `MONGODB_URI` | MongoDB connection string | `mongodb://localhost:27017/tam-agent` |
 | `PORT` | Server port | `3000` |
 
-## Project Structure
+### Run
 
+```bash
+# Development (with auto-reload)
+npm run dev
+
+# Production
+npm start
 ```
-src/
-├── llm.js                 # LLM Abstraction Layer (Bedrock client, streaming)
-├── agentLoop.js           # Custom state machine (replaces LangGraph)
-├── callbacks.js           # Callback interface for SSE events
-├── server.js              # Express server with SSE streaming
-├── preflight.js           # Query classification (on-topic/off-topic)
-├── clientPersona.js       # Client persona detection
-├── researchAgents.js      # Multi-turn research with tool calling
-├── compaction.js          # Context window management
-├── skillLoader.js         # Skill definition loading
-├── planManager.js         # Multi-step plan management
-├── documentStore.js       # Generated document storage
-├── fileHandler.js         # File upload handling
-├── auth.js                # JWT authentication
-├── passwordPolicy.js      # Password validation
-├── lockout.js             # Account lockout
-├── auditLogger.js         # Security audit logging
-├── db.js                  # MongoDB connection
-├── migration.js           # Database migrations
-├── stores/                # Backend-agnostic persistence (JSON/MongoDB)
-├── tools/                 # Tool implementations (Jira, Confluence, Kapa, Web)
-└── __tests__/             # Unit, property, and integration tests
-    ├── *.test.js          # Unit tests
-    ├── *.property.test.js # Property-based tests (fast-check)
-    └── integration/       # End-to-end integration tests
+
+### Test
+
+```bash
+npm test                # Run all tests
+npm run test:watch      # Watch mode
+npm run test:coverage   # With coverage report
 ```
 
 ## API
 
 ### POST /api/chat
 
-Streams an agent response via Server-Sent Events.
+Streams an SSE response for a chat message.
 
-**Request:**
+**Request body:**
 ```json
 {
   "conversationId": "conv-123",
-  "messages": [{"role": "user", "content": "How do I reset my password?"}],
+  "messages": [{"role": "user", "content": "How do I reset my Jira password?"}],
   "systemPrompt": "You are a helpful TAM agent.",
-  "problemText": "How do I reset my password?"
+  "problemText": "How do I reset my Jira password?"
 }
 ```
 
-**SSE Events:**
+**SSE events:**
 | Event | Data | Description |
 |-------|------|-------------|
 | `phase` | `{ phase }` | Phase transition (preflight, research, synthesis) |
-| `token` | `{ text }` | Streaming text token |
+| `token` | `{ text }` | Streamed text token |
 | `tool_status` | `{ name, status }` | Tool execution status |
 | `skill_active` | `{ skillId }` | Skill activated |
 | `status` | `{ status }` | Status message |
 | `complete` | `{ text }` | Final response text |
-| `error` | `{ error }` | Error details |
+| `error` | `{ error }` | Error message |
 
 ### GET /health
 
 Returns `{ "status": "ok" }`.
 
-## Agent Loop Flow
+## Project Structure
 
-1. **Preflight Gate** — Haiku classifies the query (on-topic/off-topic, intent, required tools/skills)
+```
+src/
+├── llm.js                 # LLM Abstraction Layer (Bedrock)
+├── agentLoop.js           # Custom state machine orchestrator
+├── callbacks.js           # Callback interface validation
+├── server.js              # Express server with SSE
+├── preflight.js           # Query classification (standalone)
+├── clientPersona.js       # Client persona detection
+├── researchAgents.js      # Research agents with query reformulation
+├── compaction.js          # Context window compaction
+├── skillLoader.js         # Skill definition loader
+├── stores/                # Persistence adapters (MongoDB/JSON)
+├── tools/                 # Tool implementations (Jira, Confluence, etc.)
+├── auth.js                # Authentication
+└── __tests__/             # Unit, property, and integration tests
+    ├── *.test.js          # Unit tests
+    ├── *.property.test.js # Property-based tests (fast-check)
+    └── integration/       # End-to-end integration tests
+```
+
+## Agent Flow
+
+1. **Preflight Gate** — Haiku classifies the query (on-topic/off-topic, intent, required tools)
 2. **Skill Loading** — Loads relevant skill definitions based on classification
 3. **Routing** — Routes to multi-node (skill-driven) or research path
-4. **Research Dispatch** — Parallel sub-agents query Jira, Confluence, Docs, Web via `Promise.allSettled`
-5. **Synthesis Loop** — Sonnet streams the final response with tool-use capability (up to 10 iterations)
-
-Off-topic queries are rejected at step 1 with a polite refusal — no expensive operations run.
+4. **Research Dispatch** — Parallel sub-agents search Jira, Confluence, Docs, Web via `Promise.allSettled`
+5. **Synthesis Loop** — Sonnet streams the final response with tool-use capability
+6. **Context Compaction** — Summarizes older messages when context window is exceeded
 
 ## Testing
 
+The project uses property-based testing (fast-check) alongside traditional unit tests:
+
+- **288 tests** across 23 test files
+- **18 property-based tests** verifying universal correctness properties
+- **6 integration tests** covering end-to-end flows and SSE streaming
+- Properties cover response normalization, stream assembly, error handling, routing correctness, and more
+
+## Deployment
+
+### AWS ECS Fargate (Recommended)
+
+The agent uses the default AWS credential chain, so on ECS Fargate it automatically picks up the task IAM role — no API keys needed.
+
+See the [Deployment Guide](#deployment-guide) section below for step-by-step instructions.
+
+---
+
+## Deployment Guide
+
+### Option 1: ECS Fargate (Production)
+
+#### 1. Create ECR Repository
+
 ```bash
-# Run all tests
-npm test
-
-# Watch mode
-npm run test:watch
-
-# Coverage report
-npm run test:coverage
+aws ecr create-repository --repository-name tam-agent --region us-east-1
 ```
 
-**Test breakdown:**
-- 288 tests across 23 test files
-- 18 property-based tests (100+ iterations each) via fast-check
-- 6 integration tests covering end-to-end flows and SSE streaming
-- Properties validate: response normalization, stream assembly, error handling, execution order, fault tolerance, termination guarantees
+#### 2. Create Dockerfile
 
-## LLM Abstraction
+```dockerfile
+FROM node:20-alpine
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci --production
+COPY src/ ./src/
+COPY public/ ./public/
+COPY skills/ ./skills/
+EXPOSE 3000
+CMD ["node", "src/server.js"]
+```
 
-The `src/llm.js` module decouples all application code from Bedrock specifics:
+#### 3. Build and Push
 
-```javascript
-import { createMessage, streamMessage } from './llm.js';
+```bash
+aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin <ACCOUNT_ID>.dkr.ecr.us-east-1.amazonaws.com
 
-// Non-streaming call
-const response = await createMessage({
-  model: 'sonnet',        // or 'haiku', or a full model ID
-  system: 'You are helpful.',
-  messages: [{ role: 'user', content: 'Hello' }],
-  tools: [...],           // optional, Anthropic Messages API format
-  maxTokens: 4096,
-});
+docker build -t tam-agent .
+docker tag tam-agent:latest <ACCOUNT_ID>.dkr.ecr.us-east-1.amazonaws.com/tam-agent:latest
+docker push <ACCOUNT_ID>.dkr.ecr.us-east-1.amazonaws.com/tam-agent:latest
+```
 
-// Streaming call (async generator)
-for await (const event of streamMessage({ model: 'sonnet', ... })) {
-  if (event.type === 'text') console.log(event.text);
-  if (event.type === 'message_complete') console.log(event.response);
+#### 4. Create IAM Task Role
+
+Create a role with this policy (allows Bedrock model invocation):
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "bedrock:InvokeModel",
+        "bedrock:InvokeModelWithResponseStream"
+      ],
+      "Resource": [
+        "arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-*"
+      ]
+    }
+  ]
 }
 ```
+
+#### 5. Create ECS Task Definition
+
+```json
+{
+  "family": "tam-agent",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "512",
+  "memory": "1024",
+  "taskRoleArn": "arn:aws:iam::<ACCOUNT_ID>:role/tam-agent-task-role",
+  "executionRoleArn": "arn:aws:iam::<ACCOUNT_ID>:role/ecsTaskExecutionRole",
+  "containerDefinitions": [
+    {
+      "name": "tam-agent",
+      "image": "<ACCOUNT_ID>.dkr.ecr.us-east-1.amazonaws.com/tam-agent:latest",
+      "portMappings": [{ "containerPort": 3000 }],
+      "environment": [
+        { "name": "AWS_REGION", "value": "us-east-1" },
+        { "name": "BEDROCK_SONNET_MODEL_ID", "value": "anthropic.claude-sonnet-4-20250514-v1:0" },
+        { "name": "BEDROCK_HAIKU_MODEL_ID", "value": "anthropic.claude-haiku-4-5-20251001-v1:0" },
+        { "name": "PORT", "value": "3000" }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/tam-agent",
+          "awslogs-region": "us-east-1",
+          "awslogs-stream-prefix": "ecs"
+        }
+      }
+    }
+  ]
+}
+```
+
+#### 6. Create ECS Service
+
+```bash
+# Create cluster
+aws ecs create-cluster --cluster-name tam-agent-cluster
+
+# Create service with ALB
+aws ecs create-service \
+  --cluster tam-agent-cluster \
+  --service-name tam-agent-service \
+  --task-definition tam-agent \
+  --desired-count 1 \
+  --launch-type FARGATE \
+  --network-configuration "awsvpcConfiguration={subnets=[subnet-xxx],securityGroups=[sg-xxx],assignPublicIp=ENABLED}"
+```
+
+### Option 2: Local Testing with AWS Credentials
+
+```bash
+# Configure AWS credentials locally
+aws configure
+# Or export them directly:
+export AWS_ACCESS_KEY_ID=your-key
+export AWS_SECRET_ACCESS_KEY=your-secret
+export AWS_REGION=us-east-1
+
+# Set model IDs
+export BEDROCK_SONNET_MODEL_ID=anthropic.claude-sonnet-4-20250514-v1:0
+export BEDROCK_HAIKU_MODEL_ID=anthropic.claude-haiku-4-5-20251001-v1:0
+
+# Start the server
+npm start
+```
+
+### Testing the Deployment
+
+```bash
+# Health check
+curl http://localhost:3000/health
+
+# Chat request (SSE stream)
+curl -N -X POST http://localhost:3000/api/chat \
+  -H "Content-Type: application/json" \
+  -d '{
+    "conversationId": "test-1",
+    "messages": [{"role": "user", "content": "How do I check my Jira ticket status?"}],
+    "systemPrompt": "You are a helpful TAM agent.",
+    "problemText": "How do I check my Jira ticket status?"
+  }'
+```
+
+You should see SSE events streaming back:
+```
+event: phase
+data: {"phase":"preflight"}
+
+event: phase
+data: {"phase":"research"}
+
+event: token
+data: {"text":"To check your Jira ticket status..."}
+
+event: complete
+data: {"text":"To check your Jira ticket status, navigate to..."}
+```
+
+### Enabling Bedrock Models
+
+Before deploying, ensure the Claude models are enabled in your AWS account:
+
+1. Go to **AWS Console → Amazon Bedrock → Model access**
+2. Request access to:
+   - `anthropic.claude-sonnet-4-20250514-v1:0` (or your preferred Sonnet version)
+   - `anthropic.claude-haiku-4-5-20251001-v1:0` (or your preferred Haiku version)
+3. Wait for access to be granted (usually instant for on-demand)
 
 ## License
 
