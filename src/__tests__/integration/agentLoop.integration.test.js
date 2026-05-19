@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, beforeAll, afterAll, vi } from 'vitest';
 import jwt from 'jsonwebtoken';
 
-// Mock external dependencies (LLM, skills, tools)
+// Mock external dependencies (LLM, skills, tools, db)
 vi.mock('../../llm.js', () => ({
   createMessage: vi.fn(),
   streamMessage: vi.fn(),
@@ -13,6 +13,27 @@ vi.mock('../../tools/index.js', () => ({
   executeTool: vi.fn(),
   getToolDefinitions: vi.fn(() => []),
 }));
+vi.mock('../../db.js', () => {
+  const mockFindOne = vi.fn().mockResolvedValue(
+    { email: 'test@capillarytech.com', name: 'Test User', role: 'user', status: 'active' }
+  );
+  const mockFind = vi.fn().mockReturnValue({
+    sort: vi.fn().mockReturnValue({
+      toArray: vi.fn().mockResolvedValue([]),
+    }),
+  });
+  const mockCollection = vi.fn(() => ({
+    findOne: mockFindOne,
+    find: mockFind,
+    insertOne: vi.fn().mockResolvedValue({ insertedId: 'mock-conv-id' }),
+    updateOne: vi.fn().mockResolvedValue({ modifiedCount: 1 }),
+    createIndex: vi.fn().mockResolvedValue(undefined),
+  }));
+  return {
+    connectDb: vi.fn().mockResolvedValue(undefined),
+    getDb: () => ({ collection: mockCollection }),
+  };
+});
 
 import { createMessage, streamMessage } from '../../llm.js';
 import { executeTool, getToolDefinitions } from '../../tools/index.js';

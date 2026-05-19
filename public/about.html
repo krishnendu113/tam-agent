@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>About - TAM Agent</title>
+    <link rel="stylesheet" href="/css/styles.css">
+</head>
+<body>
+    <a href="#main-content" class="skip-link">Skip to main content</a>
+
+    <div class="page-layout">
+        <!-- Navigation placeholder — populated by nav.js -->
+        <div id="navbar"></div>
+
+        <!-- Main content -->
+        <main id="main-content" class="overflow-y-auto">
+            <div class="container" style="padding-top: var(--space-xl); padding-bottom: var(--space-xl);">
+
+                <!-- Hero section -->
+                <section aria-labelledby="about-heading">
+                    <h1 id="about-heading" style="margin-bottom: var(--space-sm);">TAM Agent</h1>
+                    <p class="text-secondary" style="font-size: var(--text-lg); margin-bottom: var(--space-xl);">
+                        An AI-powered assistant built for Technical Account Managers at Capillary Technologies.
+                    </p>
+                </section>
+
+                <!-- What is TAM Agent -->
+                <section aria-labelledby="what-heading" class="card mb-lg">
+                    <h2 id="what-heading" class="card-title" style="margin-bottom: var(--space-md);">What is TAM Agent?</h2>
+                    <p>
+                        TAM Agent is an intelligent assistant designed to help Technical Account Managers (TAMs) at Capillary Technologies
+                        resolve customer issues faster and more effectively. It combines large language model capabilities with
+                        deep integration into internal tools and knowledge bases, providing contextual answers and guided troubleshooting.
+                    </p>
+                </section>
+
+                <!-- Capabilities -->
+                <section aria-labelledby="capabilities-heading" class="card mb-lg">
+                    <h2 id="capabilities-heading" class="card-title" style="margin-bottom: var(--space-md);">Capabilities</h2>
+                    <ul style="list-style: disc; padding-left: var(--space-lg);">
+                        <li style="margin-bottom: var(--space-sm);">
+                            <strong>AI-Powered Troubleshooting</strong> — Get step-by-step guidance for diagnosing and resolving
+                            technical issues using conversational AI.
+                        </li>
+                        <li style="margin-bottom: var(--space-sm);">
+                            <strong>Research &amp; Knowledge Retrieval</strong> — Search across internal documentation and
+                            knowledge bases to find relevant solutions quickly.
+                        </li>
+                        <li style="margin-bottom: var(--space-sm);">
+                            <strong>Jira Integration</strong> — Look up tickets, track issue history, and reference past
+                            resolutions directly within the conversation.
+                        </li>
+                        <li style="margin-bottom: var(--space-sm);">
+                            <strong>Confluence Integration</strong> — Access and search Confluence pages for product documentation,
+                            runbooks, and internal guides.
+                        </li>
+                        <li style="margin-bottom: var(--space-sm);">
+                            <strong>Conversation History</strong> — All your interactions are saved so you can revisit
+                            previous troubleshooting sessions at any time.
+                        </li>
+                    </ul>
+                </section>
+
+                <!-- Intended Audience -->
+                <section aria-labelledby="audience-heading" class="card mb-lg">
+                    <h2 id="audience-heading" class="card-title" style="margin-bottom: var(--space-md);">Who is it for?</h2>
+                    <p>
+                        TAM Agent is built specifically for Technical Account Managers at Capillary Technologies. Whether you're
+                        handling escalations, researching product behavior, or preparing for customer calls, TAM Agent helps you
+                        find answers faster and deliver better support.
+                    </p>
+                </section>
+
+                <!-- Call to action for unauthenticated users -->
+                <section id="cta-section" aria-labelledby="cta-heading" class="card" style="text-align: center;">
+                    <h2 id="cta-heading" class="card-title" style="margin-bottom: var(--space-md);">Get Started</h2>
+                    <p style="margin-bottom: var(--space-md);">
+                        Sign in with your Capillary Technologies Google account to start using TAM Agent.
+                    </p>
+                    <a href="/index.html" class="btn btn-primary btn-lg" aria-label="Sign in to TAM Agent">Sign In</a>
+                </section>
+
+            </div>
+        </main>
+    </div>
+
+    <script src="/js/auth.js"></script>
+    <script src="/js/nav.js"></script>
+    <script>
+    (function () {
+        'use strict';
+
+        // Render navigation — nav.js handles showing appropriate links based on auth state
+        renderNav('navbar');
+
+        // Hide the CTA section if the user is already authenticated
+        if (isAuthenticated()) {
+            var ctaSection = document.getElementById('cta-section');
+            if (ctaSection) {
+                ctaSection.classList.add('hidden');
+            }
+        }
+    })();
+    </script>
+</body>
+</html>
