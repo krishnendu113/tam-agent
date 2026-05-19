@@ -7,6 +7,7 @@ import { fileURLToPath } from 'url';
 
 import { runAgentLoop } from './agentLoop.js';
 import { createCallbackInterface } from './callbacks.js';
+import { authMiddleware, googleAuthRedirect, googleAuthCallback } from './auth.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -22,13 +23,17 @@ app.use(express.json());
 // Serve static files from public/ directory
 app.use(express.static(path.join(__dirname, '..', 'public')));
 
-// Health check endpoint
+// Health check endpoint (public)
 app.get('/health', (req, res) => {
   res.json({ status: 'ok' });
 });
 
-// Chat endpoint with SSE streaming
-app.post('/api/chat', async (req, res) => {
+// Google OAuth routes (public)
+app.get('/auth/google', googleAuthRedirect);
+app.get('/auth/google/callback', googleAuthCallback);
+
+// Chat endpoint with SSE streaming (protected)
+app.post('/api/chat', authMiddleware, async (req, res) => {
   const { conversationId, messages, systemPrompt, problemText } = req.body;
 
   // Set SSE headers

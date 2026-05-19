@@ -28,8 +28,12 @@ vi.mock('../tools/index.js', () => ({
   getToolDefinitions: vi.fn(() => []),
 }));
 
+import jwt from 'jsonwebtoken';
 import { app } from '../server.js';
 import { runAgentLoop } from '../agentLoop.js';
+
+const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-change-in-production';
+const testToken = jwt.sign({ email: 'test@capillarytech.com', name: 'Test User' }, JWT_SECRET, { expiresIn: '1h' });
 
 let server;
 let baseUrl;
@@ -68,7 +72,7 @@ describe('Server — POST /api/chat', () => {
   it('accepts POST requests and returns SSE stream', async () => {
     const response = await fetch(`${baseUrl}/api/chat`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${testToken}` },
       body: JSON.stringify({
         conversationId: 'test-123',
         messages: [{ role: 'user', content: 'Hello' }],
@@ -89,7 +93,7 @@ describe('Server — POST /api/chat', () => {
   it('calls runAgentLoop with correct state from request body', async () => {
     await fetch(`${baseUrl}/api/chat`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${testToken}` },
       body: JSON.stringify({
         conversationId: 'conv-456',
         messages: [{ role: 'user', content: 'Search Jira' }],
@@ -121,7 +125,7 @@ describe('Server — POST /api/chat', () => {
   it('handles missing request body fields gracefully', async () => {
     const response = await fetch(`${baseUrl}/api/chat`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${testToken}` },
       body: JSON.stringify({}),
     });
 
@@ -141,7 +145,7 @@ describe('Server — POST /api/chat', () => {
 
     const response = await fetch(`${baseUrl}/api/chat`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${testToken}` },
       body: JSON.stringify({
         conversationId: 'test',
         messages: [],

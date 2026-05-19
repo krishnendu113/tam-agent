@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, beforeAll, afterAll, vi } from 'vitest';
+import jwt from 'jsonwebtoken';
 
 // Mock external dependencies (LLM, skills, tools)
 vi.mock('../../llm.js', () => ({
@@ -18,6 +19,9 @@ import { executeTool, getToolDefinitions } from '../../tools/index.js';
 import { loadSkillsById } from '../../skillLoader.js';
 import { runAgentLoop } from '../../agentLoop.js';
 import { app } from '../../server.js';
+
+const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-change-in-production';
+const testToken = jwt.sign({ email: 'test@capillarytech.com', name: 'Test User' }, JWT_SECRET, { expiresIn: '1h' });
 
 /**
  * Helper: creates a mock preflight response indicating on-topic classification.
@@ -401,7 +405,7 @@ describe('Integration: SSE Streaming from Express Server', () => {
 
     const response = await fetch(`${baseUrl}/api/chat`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${testToken}` },
       body: JSON.stringify({
         conversationId: 'sse-test-1',
         messages: [{ role: 'user', content: 'Search Jira for password issues' }],
@@ -438,7 +442,7 @@ describe('Integration: SSE Streaming from Express Server', () => {
 
     const response = await fetch(`${baseUrl}/api/chat`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${testToken}` },
       body: JSON.stringify({
         conversationId: 'sse-test-2',
         messages: [{ role: 'user', content: 'Tell me a joke' }],
@@ -504,7 +508,7 @@ describe('Integration: SSE Streaming from Express Server', () => {
 
     const response = await fetch(`${baseUrl}/api/chat`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${testToken}` },
       body: JSON.stringify({
         conversationId: 'sse-test-3',
         messages: [{ role: 'user', content: 'Search for issues' }],

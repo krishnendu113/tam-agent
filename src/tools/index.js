@@ -1,8 +1,7 @@
-// PLACEHOLDER: This module should be replaced with the actual source from the source repository.
 // Tool registry - manages available tools and their execution.
 
-import { jiraTool } from './jira.js';
-import { confluenceTool } from './confluence.js';
+import { jiraTool, jiraGetIssueTool } from './jira.js';
+import { confluenceTool, confluenceGetPageTool } from './confluence.js';
 import { kapaTool } from './kapa.js';
 import { webSearchTool } from './webSearch.js';
 
@@ -69,7 +68,9 @@ export function getToolDefinitions(tags) {
 
 // Register built-in tools
 registerTool(jiraTool);
+registerTool(jiraGetIssueTool);
 registerTool(confluenceTool);
+registerTool(confluenceGetPageTool);
 registerTool(kapaTool);
 registerTool(webSearchTool);
 
