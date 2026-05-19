@@ -14,6 +14,7 @@ export function createStore(collection, options = {}) {
   const backend = process.env.STORE_BACKEND || 'json';
 
   switch (backend) {
+    case 'mongodb':
     case 'mongo':
       return createMongoStore(collection, options);
     case 'json':

@@ -8,6 +8,7 @@ import { fileURLToPath } from 'url';
 import { runAgentLoop } from './agentLoop.js';
 import { createCallbackInterface } from './callbacks.js';
 import { authMiddleware, googleAuthRedirect, googleAuthCallback } from './auth.js';
+import { connectDb } from './db.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -84,9 +85,24 @@ const PORT = process.env.PORT || 3000;
 
 // Only start listening if this file is run directly (not imported for testing)
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  app.listen(PORT, () => {
-    console.log(`TAM Agent server running on port ${PORT}`);
-  });
+  const startServer = async () => {
+    // Connect to MongoDB if using mongo backend
+    const storeBackend = process.env.STORE_BACKEND || 'json';
+    if (storeBackend === 'mongodb' || storeBackend === 'mongo') {
+      try {
+        await connectDb();
+      } catch (err) {
+        console.error('[server] Failed to connect to MongoDB:', err.message);
+        process.exit(1);
+      }
+    }
+
+    app.listen(PORT, () => {
+      console.log(`TAM Agent server running on port ${PORT}`);
+    });
+  };
+
+  startServer();
 }
 
 export { app };

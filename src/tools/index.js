@@ -4,6 +4,7 @@ import { jiraTool, jiraGetIssueTool } from './jira.js';
 import { confluenceTool, confluenceGetPageTool } from './confluence.js';
 import { kapaTool } from './kapa.js';
 import { webSearchTool } from './webSearch.js';
+import { docsSearchTool } from './docsSearch.js';
 
 /**
  * Registry of all available tools.
@@ -73,5 +74,6 @@ registerTool(confluenceTool);
 registerTool(confluenceGetPageTool);
 registerTool(kapaTool);
 registerTool(webSearchTool);
+registerTool(docsSearchTool);
 
 export default { registerTool, getAllTools, getToolsByTags, executeTool, getToolDefinitions };
