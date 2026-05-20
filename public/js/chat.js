@@ -1,12 +1,13 @@
 /**
  * Chat Module
  * Handles the chat interface: conversation sidebar, message sending,
- * SSE streaming, and conversation loading.
+ * SSE streaming, phase indicators, dark mode, and conversation loading.
  *
- * Dependencies: auth.js (requireAuth, getToken), api.js (apiGet), nav.js (renderNav)
+ * Dependencies: auth.js (requireAuth, getToken, getCurrentUser, clearToken),
+ *               api.js (apiGet)
  */
 
-/* global requireAuth, getToken, apiGet, renderNav, escapeHtml */
+/* global requireAuth, getToken, getCurrentUser, clearToken, apiGet, escapeHtml */
 
 /** @type {string|null} */
 var currentConversationId = null;
@@ -17,18 +18,60 @@ var messages = [];
 /** @type {boolean} */
 var isStreaming = false;
 
+/** @type {Array<{_id: string, title: string, updatedAt: string}>} */
+var allConversations = [];
+
 /**
  * Initialize the chat page on load.
  */
 (function init() {
   requireAuth();
-  renderNav('navbar');
+  initTheme();
+  initUserInfo();
   loadConversationList();
   attachEventListeners();
 })();
 
 /**
- * Attach event listeners for send button, input, sidebar toggle, and new conversation.
+ * Initialize dark/light theme from localStorage.
+ */
+function initTheme() {
+  try {
+    var savedTheme = localStorage.getItem('theme');
+    if (savedTheme === 'dark') {
+      document.body.classList.add('dark-mode');
+    }
+  } catch (e) {
+    // localStorage may not be available in test environments
+  }
+}
+
+/**
+ * Toggle dark mode and persist preference.
+ */
+function toggleTheme() {
+  document.body.classList.toggle('dark-mode');
+  var isDark = document.body.classList.contains('dark-mode');
+  localStorage.setItem('theme', isDark ? 'dark' : 'light');
+}
+
+/**
+ * Populate user info in the sidebar footer.
+ */
+function initUserInfo() {
+  try {
+    var user = getCurrentUser();
+    var emailEl = document.getElementById('sidebar-user-email');
+    if (emailEl && user) {
+      emailEl.textContent = user.email || user.name || 'User';
+    }
+  } catch (e) {
+    // getCurrentUser may not be available in test environments
+  }
+}
+
+/**
+ * Attach event listeners for send button, input, sidebar toggle, new conversation, etc.
  */
 function attachEventListeners() {
   var sendBtn = document.getElementById('send-btn');
@@ -36,6 +79,9 @@ function attachEventListeners() {
   var newConvBtn = document.getElementById('new-conversation-btn');
   var sidebarToggle = document.getElementById('sidebar-toggle');
   var sidebarOverlay = document.getElementById('sidebar-overlay');
+  var themeToggle = document.getElementById('theme-toggle');
+  var signoutBtn = document.getElementById('sidebar-signout');
+  var searchInput = document.getElementById('sidebar-search-input');
 
   if (sendBtn) {
     sendBtn.addEventListener('click', handleSendMessage);
@@ -66,6 +112,22 @@ function attachEventListeners() {
 
   if (sidebarOverlay) {
     sidebarOverlay.addEventListener('click', closeSidebar);
+  }
+
+  if (themeToggle) {
+    themeToggle.addEventListener('click', toggleTheme);
+  }
+
+  if (signoutBtn) {
+    signoutBtn.addEventListener('click', function (e) {
+      e.preventDefault();
+      clearToken();
+      window.location.href = '/index.html';
+    });
+  }
+
+  if (searchInput) {
+    searchInput.addEventListener('input', handleSearchConversations);
   }
 }
 
@@ -99,6 +161,28 @@ function closeSidebar() {
   if (toggle) toggle.setAttribute('aria-expanded', 'false');
 }
 
+
+/**
+ * Filter conversations based on search input.
+ */
+function handleSearchConversations() {
+  var searchInput = document.getElementById('sidebar-search-input');
+  if (!searchInput) return;
+
+  var query = searchInput.value.trim().toLowerCase();
+  if (!query) {
+    renderConversationList(allConversations);
+    return;
+  }
+
+  var filtered = allConversations.filter(function (conv) {
+    var title = (conv.title || '').toLowerCase();
+    return title.indexOf(query) !== -1;
+  });
+
+  renderConversationList(filtered);
+}
+
 /**
  * Load the conversation list from the API and render in the sidebar.
  */
@@ -108,6 +192,7 @@ async function loadConversationList() {
     if (!response.ok) return;
 
     var conversations = await response.json();
+    allConversations = conversations;
     renderConversationList(conversations);
   } catch (e) {
     // Network error — silently fail, sidebar stays empty
@@ -210,12 +295,14 @@ function handleNewConversation() {
   messages = [];
   renderMessages();
   highlightActiveConversation();
+  hidePhaseBar();
 
   var chatInput = document.getElementById('chat-input');
   if (chatInput) {
     chatInput.focus();
   }
 }
+
 
 /**
  * Handle sending a message.
@@ -241,6 +328,9 @@ async function handleSendMessage() {
 
   // Disable input during streaming
   setStreamingState(true);
+
+  // Show phase bar
+  showPhaseBar('understanding');
 
   // Send to API and handle SSE stream
   await sendMessageStream(content);
@@ -275,6 +365,7 @@ async function sendMessageStream(userMessage) {
       }
       showError(errorData.error || 'An error occurred');
       setStreamingState(false);
+      hidePhaseBar();
       return;
     }
 
@@ -283,6 +374,7 @@ async function sendMessageStream(userMessage) {
   } catch (e) {
     showError('Connection error. Please try again.');
     setStreamingState(false);
+    hidePhaseBar();
   }
 }
 
@@ -345,6 +437,7 @@ async function processSSEStream(response) {
   } catch (e) {
     showError('Stream interrupted. Please try again.');
     setStreamingState(false);
+    hidePhaseBar();
   }
 }
 
@@ -372,6 +465,17 @@ function handleSSEEvent(eventType, data, contentRef) {
       updateLastAssistantMessage(newContent);
       break;
 
+    case 'phase':
+      var phaseData;
+      try {
+        phaseData = JSON.parse(data);
+      } catch (e) {
+        phaseData = { phase: data };
+      }
+      var phase = phaseData.phase || data;
+      showPhaseBar(phase);
+      break;
+
     case 'complete':
       var completeData;
       try {
@@ -386,6 +490,7 @@ function handleSSEEvent(eventType, data, contentRef) {
       }
 
       setStreamingState(false);
+      hidePhaseBar();
       loadConversationList(); // Refresh sidebar
       break;
 
@@ -398,11 +503,60 @@ function handleSSEEvent(eventType, data, contentRef) {
       }
       showError(errorData.error || 'An error occurred during streaming');
       setStreamingState(false);
+      hidePhaseBar();
+      break;
+
+    case 'status':
+      // Status events can update the phase bar
+      var statusData;
+      try {
+        statusData = JSON.parse(data);
+      } catch (e) {
+        statusData = {};
+      }
+      if (statusData.phase) {
+        showPhaseBar(statusData.phase);
+      }
       break;
 
     default:
-      // Ignore unknown events (e.g., status, phase)
+      // Ignore unknown events
       break;
+  }
+}
+
+
+/**
+ * Show the phase bar and set the active phase.
+ * @param {string} phase - One of 'understanding', 'researching', 'synthesising'
+ */
+function showPhaseBar(phase) {
+  var phaseBar = document.getElementById('phase-bar');
+  if (!phaseBar) return;
+
+  phaseBar.classList.add('visible');
+
+  var phases = ['understanding', 'researching', 'synthesising'];
+  var phaseIndex = phases.indexOf(phase);
+
+  var items = phaseBar.querySelectorAll('.phase-item');
+  for (var i = 0; i < items.length; i++) {
+    items[i].classList.remove('active', 'completed');
+    if (i < phaseIndex) {
+      items[i].classList.add('completed');
+    } else if (i === phaseIndex) {
+      items[i].classList.add('active');
+    }
+  }
+}
+
+/**
+ * Hide the phase bar.
+ */
+function hidePhaseBar() {
+  var phaseBar = document.getElementById('phase-bar');
+  if (phaseBar) {
+    phaseBar.classList.remove('visible');
   }
 }
 
@@ -421,6 +575,12 @@ function updateLastAssistantMessage(content) {
     if (contentEl) {
       contentEl.textContent = content;
     }
+  }
+
+  // Scroll to bottom
+  var chatMessages = document.getElementById('chat-messages');
+  if (chatMessages) {
+    chatMessages.scrollTop = chatMessages.scrollHeight;
   }
 }
 
@@ -528,6 +688,17 @@ function formatRelativeTime(dateStr) {
 
   // For older dates, show the date
   return date.toLocaleDateString();
+}
+
+/**
+ * Escape HTML special characters to prevent XSS when injecting user-provided text.
+ * @param {string} str - The string to escape
+ * @returns {string} The escaped string safe for HTML insertion
+ */
+function escapeHtml(str) {
+  var div = document.createElement('div');
+  div.appendChild(document.createTextNode(str));
+  return div.innerHTML;
 }
 
 /**
