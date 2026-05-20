@@ -10,23 +10,6 @@
     <a href="#chat-input" class="skip-link">Skip to chat input</a>
 
     <div class="chat-page">
-        <!-- Sidebar toggle button (visible only on mobile) -->
-        <button
-            class="sidebar-toggle"
-            id="sidebar-toggle"
-            type="button"
-            aria-label="Toggle conversation sidebar"
-            aria-expanded="false"
-            aria-controls="conversation-sidebar"
-        >
-            <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-                <path d="M3 5h14M3 10h14M3 15h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-            </svg>
-        </button>
-
-        <!-- Sidebar overlay backdrop (mobile) -->
-        <div class="sidebar-overlay" id="sidebar-overlay" aria-hidden="true"></div>
-
         <!-- Conversation sidebar (left panel) -->
         <aside
             class="sidebar"
@@ -73,6 +56,23 @@
 
         <!-- Main chat area -->
         <main class="chat-main" aria-label="Chat area">
+            <!-- Sidebar toggle button (visible only on mobile) -->
+            <button
+                class="sidebar-toggle"
+                id="sidebar-toggle"
+                type="button"
+                aria-label="Toggle conversation sidebar"
+                aria-expanded="false"
+                aria-controls="conversation-sidebar"
+            >
+                <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+                    <path d="M3 5h14M3 10h14M3 15h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                </svg>
+            </button>
+
+            <!-- Sidebar overlay backdrop (mobile) -->
+            <div class="sidebar-overlay" id="sidebar-overlay" aria-hidden="true"></div>
+
             <!-- Top bar -->
             <header class="chat-topbar">
                 <div class="chat-topbar-left">
