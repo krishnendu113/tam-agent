@@ -898,6 +898,31 @@ body.dark-mode .message-error {
   color: #fca5a5;
 }
 
+/* Tool/skill usage indicator */
+.tool-indicator {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-xs) var(--space-md);
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+  margin-bottom: var(--space-sm);
+  animation: fadeIn 0.2s ease;
+}
+
+.tool-indicator-icon {
+  font-size: var(--text-sm);
+}
+
+.tool-indicator-text {
+  font-style: italic;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
 /* --------------------------------------------------------------------------
    Chat Input Area
    -------------------------------------------------------------------------- */

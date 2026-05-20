@@ -438,6 +438,14 @@ async function processSSEStream(response) {
     showError('Stream interrupted. Please try again.');
     setStreamingState(false);
     hidePhaseBar();
+    removeToolIndicator();
+  }
+
+  // Safety: if stream ended without a complete event, re-enable input
+  if (isStreaming) {
+    setStreamingState(false);
+    hidePhaseBar();
+    removeToolIndicator();
   }
 }
 
@@ -454,9 +462,11 @@ function handleSSEEvent(eventType, data, contentRef) {
       try {
         tokenData = JSON.parse(data);
       } catch (e) {
-        tokenData = { token: data };
+        tokenData = { text: data };
       }
-      var tokenText = tokenData.token || tokenData.content || data;
+      // Server sends { text: "..." }, also handle { token: "..." } and { content: "..." }
+      var tokenText = tokenData.text || tokenData.token || tokenData.content || '';
+      if (!tokenText) break;
       var newContent = contentRef.getContent() + tokenText;
       contentRef.setContent(newContent);
 
@@ -484,6 +494,14 @@ function handleSSEEvent(eventType, data, contentRef) {
         completeData = {};
       }
 
+      // If the complete event contains the full text and we haven't streamed it yet,
+      // display it as the assistant message
+      if (completeData.text && contentRef.getContent() === '') {
+        contentRef.setContent(completeData.text);
+        messages[messages.length - 1].content = completeData.text;
+        updateLastAssistantMessage(completeData.text);
+      }
+
       // Update conversationId if provided
       if (completeData.conversationId) {
         currentConversationId = completeData.conversationId;
@@ -491,6 +509,7 @@ function handleSSEEvent(eventType, data, contentRef) {
 
       setStreamingState(false);
       hidePhaseBar();
+      removeToolIndicator();
       loadConversationList(); // Refresh sidebar
       break;
 
@@ -504,6 +523,7 @@ function handleSSEEvent(eventType, data, contentRef) {
       showError(errorData.error || 'An error occurred during streaming');
       setStreamingState(false);
       hidePhaseBar();
+      removeToolIndicator();
       break;
 
     case 'status':
@@ -514,8 +534,46 @@ function handleSSEEvent(eventType, data, contentRef) {
       } catch (e) {
         statusData = {};
       }
-      if (statusData.phase) {
-        showPhaseBar(statusData.phase);
+      if (statusData.status) {
+        // Map status strings to phases
+        var statusPhaseMap = {
+          'thinking': 'understanding',
+          'understanding': 'understanding',
+          'researching': 'researching',
+          'searching': 'researching',
+          'synthesizing': 'synthesising',
+          'synthesising': 'synthesising',
+          'writing': 'synthesising'
+        };
+        var mappedPhase = statusPhaseMap[statusData.status.toLowerCase()] || null;
+        if (mappedPhase) {
+          showPhaseBar(mappedPhase);
+        }
+      }
+      break;
+
+    case 'tool_status':
+      // Show tool usage in the chat as a subtle indicator
+      var toolData;
+      try {
+        toolData = JSON.parse(data);
+      } catch (e) {
+        toolData = {};
+      }
+      if (toolData.name && toolData.status === 'running') {
+        showToolIndicator(toolData.name);
+      }
+      break;
+
+    case 'skill_active':
+      var skillData;
+      try {
+        skillData = JSON.parse(data);
+      } catch (e) {
+        skillData = {};
+      }
+      if (skillData.skillId) {
+        showToolIndicator('Skill: ' + skillData.skillId);
       }
       break;
 
@@ -558,6 +616,40 @@ function hidePhaseBar() {
   if (phaseBar) {
     phaseBar.classList.remove('visible');
   }
+}
+
+/**
+ * Show a tool/skill usage indicator in the chat area.
+ * @param {string} toolName
+ */
+function showToolIndicator(toolName) {
+  var messagesInner = document.getElementById('chat-messages-inner');
+  if (!messagesInner) return;
+
+  // Remove any existing tool indicator
+  var existing = messagesInner.querySelector('.tool-indicator');
+  if (existing) existing.remove();
+
+  var indicator = document.createElement('div');
+  indicator.className = 'tool-indicator';
+  indicator.innerHTML = '<span class="tool-indicator-icon">🔧</span> <span class="tool-indicator-text">Using: ' + escapeHtml(toolName) + '</span>';
+  messagesInner.appendChild(indicator);
+
+  // Scroll to bottom
+  var chatMessages = document.getElementById('chat-messages');
+  if (chatMessages) {
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+  }
+}
+
+/**
+ * Remove the tool indicator from the chat area.
+ */
+function removeToolIndicator() {
+  var messagesInner = document.getElementById('chat-messages-inner');
+  if (!messagesInner) return;
+  var existing = messagesInner.querySelector('.tool-indicator');
+  if (existing) existing.remove();
 }
 
 /**
