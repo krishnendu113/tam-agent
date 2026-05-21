@@ -352,7 +352,7 @@ async function sendMessageStream(userMessage) {
       },
       body: JSON.stringify({
         conversationId: currentConversationId,
-        messages: messages
+        messages: messages.map(function (m) { return { role: m.role, content: m.content }; })
       })
     });
 

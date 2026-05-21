@@ -94,9 +94,12 @@ app.post('/api/chat', enhancedAuthMiddleware, async (req, res) => {
   }
 
   // Build AgentState from incoming request
+  // Strip any extra fields from messages (only role and content are needed for the LLM)
+  const sanitizedMessages = (messages || []).map(m => ({ role: m.role, content: m.content }));
+
   const state = {
     conversationId: activeConversationId,
-    messages: messages || [],
+    messages: sanitizedMessages,
     systemPrompt: systemPrompt || '',
     problemText: problemText || '',
   };

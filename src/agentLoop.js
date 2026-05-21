@@ -151,7 +151,7 @@ export async function preflightNode(state) {
 export { PREFLIGHT_SYSTEM_PROMPT, parsePreflightResponse, validatePreflightResult, FAIL_OPEN_RESULT };
 
 /** Refusal message for off-topic queries. */
-const REFUSAL_MESSAGE = "I'm sorry, but I can only help with technical support and account management questions. Is there something else I can help you with?";
+const REFUSAL_MESSAGE = "🤖 That's outside my wheelhouse! I'm built for Jira tickets, Capillary docs, and technical troubleshooting. Try pasting a ticket ID or describing a technical issue.";
 
 export { REFUSAL_MESSAGE };
 
