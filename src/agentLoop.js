@@ -150,8 +150,20 @@ export async function preflightNode(state) {
 
 export { PREFLIGHT_SYSTEM_PROMPT, parsePreflightResponse, validatePreflightResult, FAIL_OPEN_RESULT };
 
-/** Refusal message for off-topic queries. */
+/** Refusal message for off-topic queries (fallback if Haiku call fails). */
 const REFUSAL_MESSAGE = "🤖 That's outside my wheelhouse! I'm built for Jira tickets, Capillary docs, and technical troubleshooting. Try pasting a ticket ID or describing a technical issue.";
+
+/** System prompt for generating dynamic refusal messages. */
+const REFUSAL_SYSTEM_PROMPT = `You are a witty, friendly assistant that redirects users back to your core purpose. You ONLY help with:
+- Jira tickets and issues
+- Capillary Technologies documentation
+- Technical troubleshooting for Capillary products
+
+The user asked something off-topic. Write a SHORT (1-2 sentences max), quirky/fun response that:
+1. Acknowledges what they said with humor
+2. Redirects them to paste a Jira ticket ID or describe a technical problem
+
+Keep it light and playful. No emojis. No apologies. Just redirect with personality.`;
 
 export { REFUSAL_MESSAGE };
 
@@ -674,8 +686,29 @@ export async function runAgentLoop(state, callbacks) {
     // 2. Off-topic early termination
     if (!state.onTopic) {
       callbacks.onPhase('refusal');
-      callbacks.onToken(REFUSAL_MESSAGE);
-      callbacks.onComplete(REFUSAL_MESSAGE);
+
+      // Generate a dynamic, quirky refusal via Haiku (cheap and fast)
+      let refusalText = REFUSAL_MESSAGE;
+      try {
+        const userQuery = state.messages.length > 0
+          ? state.messages[state.messages.length - 1].content
+          : '';
+        const response = await createMessage({
+          model: 'haiku',
+          system: REFUSAL_SYSTEM_PROMPT,
+          messages: [{ role: 'user', content: userQuery }],
+          maxTokens: 100,
+        });
+        const textBlock = response.content.find(b => b.type === 'text');
+        if (textBlock && textBlock.text && textBlock.text.trim()) {
+          refusalText = textBlock.text.trim();
+        }
+      } catch (e) {
+        // Fall back to static message if Haiku fails
+      }
+
+      callbacks.onToken(refusalText);
+      callbacks.onComplete(refusalText);
       return state;
     }
 
