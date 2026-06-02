@@ -550,9 +550,16 @@ export async function sequentialResearchFallback(state, callbacks) {
 export function buildSynthesisSystemPrompt(state) {
   const basePrompt = state.systemPrompt || 'You are a helpful Technical Account Manager agent.';
 
+  const instructions = `\n\n## Response Guidelines
+
+- NEVER mention internal tool names, function names, or implementation details to the user (e.g., do not say "jira_get_issue", "confluence_search", "kapa_search", etc.)
+- Present information naturally as if you already know it — do not describe your process of looking things up
+- Focus on delivering actionable insights and solutions
+- If you used tools to gather information, just present the findings directly`;
+
   const researchContext = state.researchContext;
   if (!researchContext || !researchContext.results || researchContext.results.length === 0) {
-    return basePrompt;
+    return basePrompt + instructions;
   }
 
   const researchSummary = researchContext.results
@@ -566,7 +573,7 @@ export function buildSynthesisSystemPrompt(state) {
     })
     .join('\n\n');
 
-  return `${basePrompt}\n\n## Research Context\n\nThe following research has been gathered to help answer the user's question:\n\n${researchSummary}`;
+  return `${basePrompt}${instructions}\n\n## Research Context\n\nThe following research has been gathered to help answer the user's question:\n\n${researchSummary}`;
 }
 
 /**
