@@ -15,6 +15,7 @@ import { adminLoginHandler, bootstrapSuperAdmin, enhancedAuthMiddleware, adminMi
 import { conversationsRouter, createConversationIndexes } from './conversations.js';
 import adminRoutes from './adminRoutes.js';
 import adminInfraToggle from './adminInfraToggle.js';
+import { initTracing } from './tracing.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -169,6 +170,9 @@ const PORT = process.env.PORT || 3000;
 // Only start listening if this file is run directly (not imported for testing)
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const startServer = async () => {
+    // Initialize LangFuse tracing (no-op if env vars are missing)
+    initTracing();
+
     // Connect to database if using a database backend
     const storeBackend = (process.env.STORE_BACKEND || 'json').toLowerCase().trim();
     if (['mongodb', 'mongo', 'atlas', 'documentdb'].includes(storeBackend)) {
