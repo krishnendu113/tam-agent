@@ -504,13 +504,28 @@ function handleSSEEvent(eventType, data, contentRef) {
 
       // Update conversationId if provided
       if (completeData.conversationId) {
+        var isNewConversation = !currentConversationId;
         currentConversationId = completeData.conversationId;
+
+        // Optimistically add to sidebar immediately for new conversations
+        if (isNewConversation) {
+          var userMsg = messages.find(function (m) { return m.role === 'user'; });
+          var newTitle = userMsg ? userMsg.content.substring(0, 100).trim() : 'New conversation';
+          var newConv = {
+            _id: completeData.conversationId,
+            title: newTitle,
+            updatedAt: new Date().toISOString()
+          };
+          allConversations.unshift(newConv);
+          renderConversationList(allConversations);
+        }
       }
 
       setStreamingState(false);
       hidePhaseBar();
       removeToolIndicator();
-      loadConversationList(); // Refresh sidebar
+      // Refresh sidebar from server (will reconcile with optimistic update)
+      loadConversationList();
       break;
 
     case 'error':

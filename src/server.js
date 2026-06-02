@@ -76,7 +76,7 @@ app.post('/api/chat', enhancedAuthMiddleware, async (req, res) => {
       const db = getDb();
       const userMessages = (messages || []).filter(m => m.role === 'user');
       const firstUserMessage = userMessages.length > 0 ? userMessages[0].content : 'New conversation';
-      const title = firstUserMessage.substring(0, 50).trim();
+      const title = firstUserMessage.substring(0, 100).trim();
 
       const now = new Date();
       const result = await db.collection('conversations').insertOne({
