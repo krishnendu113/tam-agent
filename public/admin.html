@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>User Management - TAM Agent</title>
+    <link rel="stylesheet" href="/css/styles.css">
+</head>
+<body>
+    <a href="#users-table" class="skip-link">Skip to user management table</a>
+
+    <div class="page-layout">
+        <!-- Navigation bar placeholder (populated by nav.js) -->
+        <div id="navbar"></div>
+
+        <!-- Main content area -->
+        <main class="overflow-y-auto" id="main-content">
+            <div class="container" style="padding-top: var(--space-lg); padding-bottom: var(--space-lg);">
+                <header class="flex justify-between items-center mb-lg">
+                    <h1>User Management</h1>
+                </header>
+
+                <!-- Loading state -->
+                <div id="loading-state" class="empty-state" aria-live="polite" aria-label="Loading users">
+                    <div class="spinner" aria-hidden="true"></div>
+                    <p class="empty-state-title mt-md">Loading users...</p>
+                </div>
+
+                <!-- Empty state (shown when no users found) -->
+                <div id="empty-state" class="empty-state hidden" aria-live="polite">
+                    <div class="empty-state-icon" aria-hidden="true">👥</div>
+                    <p class="empty-state-title">No users found</p>
+                    <p class="empty-state-text">There are no user accounts to display.</p>
+                </div>
+
+                <!-- User table -->
+                <div id="table-container" class="table-wrapper hidden">
+                    <table class="table" id="users-table" role="table" aria-label="User accounts">
+                        <thead>
+                            <tr>
+                                <th scope="col">Name</th>
+                                <th scope="col">Email</th>
+                                <th scope="col">Role</th>
+                                <th scope="col">Status</th>
+                                <th scope="col">Last Login</th>
+                                <th scope="col">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="users-table-body">
+                            <!-- Rows populated dynamically by admin.js -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Toast notification container -->
+    <div id="toast-container" class="toast-container" role="status" aria-live="polite" aria-atomic="true"></div>
+
+    <script src="/js/auth.js"></script>
+    <script src="/js/api.js"></script>
+    <script src="/js/nav.js"></script>
+    <script src="/js/admin.js"></script>
+</body>
+</html>

@@ -8,11 +8,41 @@ vi.mock('../llm.js', () => ({
 
 // Mock the skillLoader module
 vi.mock('../skillLoader.js', () => ({
-  loadSkillsById: vi.fn(() => []),
+  getSkillSummary: vi.fn(() => null),
+  getRegistryTriggers: vi.fn(() => new Map()),
+}));
+
+// Mock new modules added by skill-system-enhancement
+vi.mock('../compaction.js', () => ({
+  shouldCompact: vi.fn(() => false),
+  compactHistory: vi.fn(),
+  buildCompactedContext: vi.fn(),
+  estimateTokenCount: vi.fn(() => 0),
+}));
+
+vi.mock('../tracing.js', () => ({
+  createTrace: vi.fn(() => ({})),
+  startSpan: vi.fn(() => ({})),
+  endSpan: vi.fn(),
+  flushTracing: vi.fn(async () => {}),
+}));
+
+vi.mock('../logger.js', () => ({
+  logLLMCall: vi.fn(),
+  logRequestComplete: vi.fn(),
+  logEvent: vi.fn(),
+}));
+
+vi.mock('../clientTag.js', () => ({
+  extractClientTag: vi.fn(() => null),
+}));
+
+vi.mock('../planManager.js', () => ({
+  listSessionPlans: vi.fn(() => []),
 }));
 
 import { createMessage } from '../llm.js';
-import { loadSkillsById } from '../skillLoader.js';
+import { getSkillSummary } from '../skillLoader.js';
 import {
   runAgentLoop,
   preflightNode,
@@ -108,13 +138,13 @@ describe('Feature: tam-agent-migration, Property 8: Agent Loop Execution Order',
       fc.asyncProperty(arbAgentState(), arbPreflightResult(), async (state, preflightResult) => {
         // Reset mocks between iterations
         createMessage.mockReset();
-        loadSkillsById.mockReset();
+        getSkillSummary.mockReset();
 
         // Force on-topic
         const onTopicResult = { ...preflightResult, onTopic: true };
 
         createMessage.mockResolvedValue(makeLlmResponse(onTopicResult));
-        loadSkillsById.mockReturnValue([]);
+        getSkillSummary.mockReturnValue(null);
 
         const { phases, callbacks } = createMockCallbacks();
 
@@ -200,10 +230,10 @@ describe('Feature: tam-agent-migration, Property 10: Skill Router Correctness', 
         async (state, preflightResult, hasSkills) => {
           // Reset mocks between iterations
           createMessage.mockReset();
-          loadSkillsById.mockReset();
+          getSkillSummary.mockReset();
 
           // Force on-topic and control skillIds based on hasSkills
-          // When hasSkills is true, ensure skillIds is non-empty so loadSkillsById is called
+          // When hasSkills is true, ensure skillIds is non-empty so getSkillSummary is called
           const onTopicResult = {
             ...preflightResult,
             onTopic: true,
@@ -212,12 +242,12 @@ describe('Feature: tam-agent-migration, Property 10: Skill Router Correctness', 
 
           createMessage.mockResolvedValue(makeLlmResponse(onTopicResult));
 
-          // When hasSkills is true, loadSkillsById returns skills → multi-node
-          // When hasSkills is false, loadSkillsById returns empty → research
+          // When hasSkills is true, getSkillSummary returns a summary → multi-node
+          // When hasSkills is false, getSkillSummary returns null → research
           if (hasSkills) {
-            loadSkillsById.mockReturnValue([{ id: 'troubleshooting', name: 'Troubleshooting' }]);
+            getSkillSummary.mockImplementation((id) => id === 'troubleshooting' ? { id: 'troubleshooting', name: 'Troubleshooting', description: 'Helps', referenceFiles: [] } : null);
           } else {
-            loadSkillsById.mockReturnValue([]);
+            getSkillSummary.mockReturnValue(null);
           }
 
           const { phases, callbacks } = createMockCallbacks();

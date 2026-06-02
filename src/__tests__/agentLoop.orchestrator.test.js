@@ -7,11 +7,41 @@ vi.mock('../llm.js', () => ({
 
 // Mock the skillLoader module
 vi.mock('../skillLoader.js', () => ({
-  loadSkillsById: vi.fn(() => []),
+  getSkillSummary: vi.fn(() => null),
+  getRegistryTriggers: vi.fn(() => new Map()),
+}));
+
+// Mock new modules added by skill-system-enhancement
+vi.mock('../compaction.js', () => ({
+  shouldCompact: vi.fn(() => false),
+  compactHistory: vi.fn(),
+  buildCompactedContext: vi.fn(),
+  estimateTokenCount: vi.fn(() => 0),
+}));
+
+vi.mock('../tracing.js', () => ({
+  createTrace: vi.fn(() => ({})),
+  startSpan: vi.fn(() => ({})),
+  endSpan: vi.fn(),
+  flushTracing: vi.fn(async () => {}),
+}));
+
+vi.mock('../logger.js', () => ({
+  logLLMCall: vi.fn(),
+  logRequestComplete: vi.fn(),
+  logEvent: vi.fn(),
+}));
+
+vi.mock('../clientTag.js', () => ({
+  extractClientTag: vi.fn(() => null),
+}));
+
+vi.mock('../planManager.js', () => ({
+  listSessionPlans: vi.fn(() => []),
 }));
 
 import { createMessage } from '../llm.js';
-import { loadSkillsById } from '../skillLoader.js';
+import { getSkillSummary } from '../skillLoader.js';
 import { runAgentLoop, REFUSAL_MESSAGE } from '../agentLoop.js';
 
 /**
@@ -90,7 +120,7 @@ describe('runAgentLoop — orchestrator', () => {
   describe('On-topic flow — full execution path', () => {
     it('executes all nodes in order for on-topic multi-node path', async () => {
       mockOnTopicPreflight({ skillIds: ['troubleshooting'] });
-      loadSkillsById.mockReturnValue([{ id: 'troubleshooting', name: 'Troubleshooting' }]);
+      getSkillSummary.mockImplementation((id) => id === 'troubleshooting' ? { id: 'troubleshooting', name: 'Troubleshooting', description: 'Helps', referenceFiles: [] } : null);
 
       const result = await runAgentLoop(baseState, callbacks);
 
@@ -110,7 +140,7 @@ describe('runAgentLoop — orchestrator', () => {
 
     it('executes research path when no skills are loaded', async () => {
       mockOnTopicPreflight({ skillIds: [], toolTags: ['webSearch'] });
-      loadSkillsById.mockReturnValue([]);
+      getSkillSummary.mockReturnValue(null);
 
       const result = await runAgentLoop(baseState, callbacks);
 
@@ -127,7 +157,7 @@ describe('runAgentLoop — orchestrator', () => {
 
     it('invokes callbacks.onSkillActive for loaded skills', async () => {
       mockOnTopicPreflight({ skillIds: ['troubleshooting'] });
-      loadSkillsById.mockReturnValue([{ id: 'troubleshooting', name: 'Troubleshooting' }]);
+      getSkillSummary.mockImplementation((id) => id === 'troubleshooting' ? { id: 'troubleshooting', name: 'Troubleshooting', description: 'Helps', referenceFiles: [] } : null);
 
       await runAgentLoop(baseState, callbacks);
 
@@ -136,18 +166,40 @@ describe('runAgentLoop — orchestrator', () => {
 
     it('preserves original state fields through the pipeline', async () => {
       mockOnTopicPreflight({ skillIds: [] });
-      loadSkillsById.mockReturnValue([]);
+      getSkillSummary.mockReturnValue(null);
 
       const result = await runAgentLoop(baseState, callbacks);
 
       expect(result.conversationId).toBe('conv-001');
-      expect(result.systemPrompt).toBe('You are a TAM agent.');
+      // systemPrompt gets plan instruction appended
+      expect(result.systemPrompt).toContain('You are a TAM agent.');
     });
   });
 
   describe('Off-topic flow — refusal and early termination', () => {
     it('invokes refusal callback and terminates when off-topic', async () => {
-      mockOffTopicPreflight();
+      // First call: preflight classification (off-topic)
+      createMessage.mockResolvedValueOnce({
+        role: 'assistant',
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            onTopic: false,
+            intent: 'casual chat',
+            toolTags: [],
+            skillIds: [],
+          }),
+        }],
+        stop_reason: 'end_turn',
+        usage: { input_tokens: 20, output_tokens: 15 },
+      });
+      // Second call: refusal message generation
+      createMessage.mockResolvedValueOnce({
+        role: 'assistant',
+        content: [{ type: 'text', text: 'Witty refusal message' }],
+        stop_reason: 'end_turn',
+        usage: { input_tokens: 15, output_tokens: 10 },
+      });
 
       const result = await runAgentLoop(baseState, callbacks);
 
@@ -156,19 +208,40 @@ describe('runAgentLoop — orchestrator', () => {
       expect(phaseCalls).toEqual(['preflight', 'refusal']);
 
       // Verify refusal token and complete callbacks
-      expect(callbacks.onToken).toHaveBeenCalledWith(REFUSAL_MESSAGE);
-      expect(callbacks.onComplete).toHaveBeenCalledWith(REFUSAL_MESSAGE);
+      expect(callbacks.onToken).toHaveBeenCalledWith('Witty refusal message');
+      expect(callbacks.onComplete).toHaveBeenCalledWith('Witty refusal message');
 
       // Verify no further execution
       expect(result.onTopic).toBe(false);
     });
 
     it('does not invoke skill loading or research when off-topic', async () => {
-      mockOffTopicPreflight();
+      // First call: preflight classification (off-topic)
+      createMessage.mockResolvedValueOnce({
+        role: 'assistant',
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            onTopic: false,
+            intent: 'casual chat',
+            toolTags: [],
+            skillIds: [],
+          }),
+        }],
+        stop_reason: 'end_turn',
+        usage: { input_tokens: 20, output_tokens: 15 },
+      });
+      // Second call: refusal message generation
+      createMessage.mockResolvedValueOnce({
+        role: 'assistant',
+        content: [{ type: 'text', text: 'Stay on topic please' }],
+        stop_reason: 'end_turn',
+        usage: { input_tokens: 15, output_tokens: 10 },
+      });
 
       await runAgentLoop(baseState, callbacks);
 
-      expect(loadSkillsById).not.toHaveBeenCalled();
+      expect(getSkillSummary).not.toHaveBeenCalled();
       // Only preflight and refusal phases
       expect(callbacks.onPhase).toHaveBeenCalledTimes(2);
       expect(callbacks.onPhase).not.toHaveBeenCalledWith('skill_loading');
@@ -180,7 +253,7 @@ describe('runAgentLoop — orchestrator', () => {
   describe('Phase callbacks — invoked at each transition', () => {
     it('invokes onPhase("preflight") as the first callback', async () => {
       mockOnTopicPreflight({ skillIds: [] });
-      loadSkillsById.mockReturnValue([]);
+      getSkillSummary.mockReturnValue(null);
 
       await runAgentLoop(baseState, callbacks);
 
@@ -189,7 +262,7 @@ describe('runAgentLoop — orchestrator', () => {
 
     it('invokes onPhase("skill_loading") after preflight for on-topic', async () => {
       mockOnTopicPreflight({ skillIds: [] });
-      loadSkillsById.mockReturnValue([]);
+      getSkillSummary.mockReturnValue(null);
 
       await runAgentLoop(baseState, callbacks);
 
@@ -198,7 +271,7 @@ describe('runAgentLoop — orchestrator', () => {
 
     it('invokes onPhase("synthesis") as the last phase for on-topic flow', async () => {
       mockOnTopicPreflight({ skillIds: [] });
-      loadSkillsById.mockReturnValue([]);
+      getSkillSummary.mockReturnValue(null);
 
       await runAgentLoop(baseState, callbacks);
 
@@ -216,9 +289,9 @@ describe('runAgentLoop — orchestrator', () => {
       // simulate an error that escapes the node. Let's mock createMessage
       // to throw in a way that preflightNode doesn't catch.
       // Actually, preflightNode catches all errors internally (fail-open).
-      // So let's test a scenario where loadSkillsById throws instead.
+      // So let's test a scenario where getSkillSummary throws instead.
       mockOnTopicPreflight({ skillIds: ['troubleshooting'] });
-      loadSkillsById.mockImplementation(() => {
+      getSkillSummary.mockImplementation(() => {
         throw new Error('Skill loading failed catastrophically');
       });
 
@@ -234,7 +307,7 @@ describe('runAgentLoop — orchestrator', () => {
 
     it('terminates gracefully after onError — no further phases invoked', async () => {
       mockOnTopicPreflight({ skillIds: ['troubleshooting'] });
-      loadSkillsById.mockImplementation(() => {
+      getSkillSummary.mockImplementation(() => {
         throw new Error('Unexpected failure');
       });
 
@@ -250,7 +323,7 @@ describe('runAgentLoop — orchestrator', () => {
 
     it('returns state even when an error occurs', async () => {
       mockOnTopicPreflight({ skillIds: ['troubleshooting'] });
-      loadSkillsById.mockImplementation(() => {
+      getSkillSummary.mockImplementation(() => {
         throw new Error('Boom');
       });
 
@@ -266,7 +339,7 @@ describe('runAgentLoop — orchestrator', () => {
     it('runAgentLoop does not import or use @langchain/langgraph', async () => {
       // This is a structural test — we verify the module works without langgraph
       mockOnTopicPreflight({ skillIds: [] });
-      loadSkillsById.mockReturnValue([]);
+      getSkillSummary.mockReturnValue(null);
 
       // If langgraph were required, this would fail since it's not installed
       const result = await runAgentLoop(baseState, callbacks);

@@ -1,6 +1,7 @@
 // Authentication module - Google OAuth + JWT session management.
 
 import jwt from 'jsonwebtoken';
+import { getDb } from './db.js';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-change-in-production';
 const JWT_EXPIRY = process.env.JWT_EXPIRY || '24h';
@@ -89,12 +90,44 @@ export async function handleGoogleCallback(code) {
     throw new Error(`Email domain "${emailDomain}" is not allowed. Allowed domains: ${ALLOWED_DOMAINS.join(', ')}`);
   }
 
-  // Issue JWT session token
+  // Upsert user record in users collection
+  const db = getDb();
+  const usersCollection = db.collection('users');
+  const now = new Date();
+
+  const upsertResult = await usersCollection.findOneAndUpdate(
+    { email: userInfo.email },
+    {
+      $set: {
+        name: userInfo.name,
+        picture: userInfo.picture,
+        authProvider: 'google',
+        lastLoginAt: now,
+        updatedAt: now
+      },
+      $setOnInsert: {
+        email: userInfo.email,
+        role: 'user',
+        status: 'active',
+        createdAt: now
+      }
+    },
+    { upsert: true, returnDocument: 'after' }
+  );
+
+  const userRecord = upsertResult.value || upsertResult;
+
+  // Check if user is disabled
+  if (userRecord.status === 'disabled') {
+    throw new Error('Account is disabled');
+  }
+
+  // Issue JWT session token with role
   const token = jwt.sign(
     {
       email: userInfo.email,
       name: userInfo.name,
-      picture: userInfo.picture
+      role: userRecord.role
     },
     JWT_SECRET,
     { expiresIn: JWT_EXPIRY }

@@ -1,7 +1,12 @@
 import { createMessage, streamMessage } from './llm.js';
-import { loadSkillsById } from './skillLoader.js';
+import { getSkillSummary, getRegistryTriggers } from './skillLoader.js';
 import { executeTool, getToolDefinitions } from './tools/index.js';
 import { validateCallbacks } from './callbacks.js';
+import { shouldCompact, compactHistory, buildCompactedContext, estimateTokenCount } from './compaction.js';
+import { createTrace, startSpan, endSpan, flushTracing } from './tracing.js';
+import { logLLMCall, logRequestComplete, logEvent } from './logger.js';
+import { extractClientTag } from './clientTag.js';
+import { listSessionPlans } from './planManager.js';
 
 /**
  * System prompt for the preflight classification LLM call.
@@ -94,12 +99,43 @@ const FAIL_OPEN_RESULT = {
 };
 
 /**
+ * Matches user query text against trigger keywords from the Skill_Registry.
+ * Case-insensitive substring matching: lowercases the query and checks if
+ * each trigger keyword (already lowercase) is contained as a substring.
+ *
+ * @param {string} queryText - The user's query text
+ * @returns {string[]} Array of skill IDs whose triggers matched the query
+ */
+export function matchTriggerSkills(queryText) {
+  if (!queryText || typeof queryText !== 'string') return [];
+
+  const lowerQuery = queryText.toLowerCase();
+  const triggersMap = getRegistryTriggers();
+  const matchedSkillIds = [];
+
+  for (const [skillId, triggers] of triggersMap) {
+    if (!Array.isArray(triggers)) continue;
+    const hasMatch = triggers.some(trigger =>
+      lowerQuery.includes(trigger.toLowerCase())
+    );
+    if (hasMatch) {
+      matchedSkillIds.push(skillId);
+    }
+  }
+
+  return matchedSkillIds;
+}
+
+/**
  * Preflight Gate — classifies user intent before expensive operations.
  * Makes a single Haiku LLM call to determine:
  * - Whether the query is on-topic
  * - The user's intent
  * - Required tool tags
  * - Required skill IDs
+ *
+ * Also matches query against Skill_Registry trigger keywords and merges
+ * trigger-matched skill IDs with LLM-classified ones.
  *
  * @param {AgentState} state - Current agent state with messages and systemPrompt
  * @returns {Promise<AgentState>} Updated state with preflight classification
@@ -123,12 +159,18 @@ export async function preflightNode(state) {
     const result = parsePreflightResponse(response);
 
     if (result) {
+      // Match query against Skill_Registry trigger keywords
+      const triggerMatchedSkillIds = matchTriggerSkills(problemText);
+
+      // Merge LLM-classified skillIds with trigger-matched skillIds (union)
+      const mergedSkillIds = [...new Set([...result.skillIds, ...triggerMatchedSkillIds])];
+
       return {
         ...state,
         onTopic: result.onTopic,
         intent: result.intent,
         toolTags: result.toolTags,
-        skillIds: result.skillIds,
+        skillIds: mergedSkillIds,
       };
     }
 
@@ -150,19 +192,32 @@ export async function preflightNode(state) {
 
 export { PREFLIGHT_SYSTEM_PROMPT, parsePreflightResponse, validatePreflightResult, FAIL_OPEN_RESULT };
 
-/** Refusal message for off-topic queries. */
-const REFUSAL_MESSAGE = "I'm sorry, but I can only help with technical support and account management questions. Is there something else I can help you with?";
+/** Refusal message for off-topic queries (fallback if Haiku call fails). */
+const REFUSAL_MESSAGE = "🤖 That's outside my wheelhouse! I'm built for Jira tickets, Capillary docs, and technical troubleshooting. Try pasting a ticket ID or describing a technical issue.";
+
+/** System prompt for generating dynamic refusal messages. */
+const REFUSAL_SYSTEM_PROMPT = `You are a witty, friendly assistant that redirects users back to your core purpose. You ONLY help with:
+- Jira tickets and issues
+- Capillary Technologies documentation
+- Technical troubleshooting for Capillary products
+
+The user asked something off-topic. Write a SHORT (1-2 sentences max), quirky/fun response that:
+1. Acknowledges what they said with humor
+2. Redirects them to paste a Jira ticket ID or describe a technical problem
+
+Keep it light and playful. No emojis. No apologies. Just redirect with personality.`;
 
 export { REFUSAL_MESSAGE };
 
 /**
  * Loads skills based on preflight classification results.
- * Reads skillIds from state (set by preflightNode), loads each skill definition,
- * and invokes callbacks.onSkillActive for each successfully loaded skill.
+ * Uses summary-only loading — only the skill name, description, and list of
+ * available reference file names are loaded into context. Full SKILL.md body
+ * and reference file contents are NOT loaded (lazy loading via tools).
  *
  * @param {AgentState} state - State with skillIds from preflight
  * @param {CallbackInterface} callbacks - Callbacks for SSE events
- * @returns {Promise<AgentState>} Updated state with loaded skills
+ * @returns {Promise<AgentState>} Updated state with loaded skill summaries
  */
 export async function loadSkillsNode(state, callbacks) {
   const skillIds = state.skillIds || [];
@@ -171,7 +226,13 @@ export async function loadSkillsNode(state, callbacks) {
     return { ...state, skills: [] };
   }
 
-  const loadedSkills = loadSkillsById(skillIds);
+  const loadedSkills = [];
+  for (const skillId of skillIds) {
+    const summary = getSkillSummary(skillId);
+    if (summary) {
+      loadedSkills.push(summary);
+    }
+  }
 
   for (const skill of loadedSkills) {
     if (callbacks && typeof callbacks.onSkillActive === 'function') {
@@ -538,9 +599,30 @@ export async function sequentialResearchFallback(state, callbacks) {
 export function buildSynthesisSystemPrompt(state) {
   const basePrompt = state.systemPrompt || 'You are a helpful Technical Account Manager agent.';
 
+  const instructions = `\n\n## Response Guidelines
+
+- NEVER mention internal tool names, function names, or implementation details to the user (e.g., do not say "jira_get_issue", "confluence_search", "kapa_search", etc.)
+- Present information naturally as if you already know it — do not describe your process of looking things up
+- Focus on delivering actionable insights and solutions
+- If you used tools to gather information, just present the findings directly`;
+
+  // Build skill context section from loaded skill summaries
+  let skillContext = '';
+  const skills = state.skills || [];
+  if (skills.length > 0) {
+    const skillSections = skills.map(skill => {
+      let section = `### ${skill.name}\n${skill.description}`;
+      if (skill.referenceFiles && skill.referenceFiles.length > 0) {
+        section += `\nAvailable reference files (use load_skill_reference to access): ${skill.referenceFiles.join(', ')}`;
+      }
+      return section;
+    }).join('\n\n');
+    skillContext = `\n\n## Active Skills\n\n${skillSections}`;
+  }
+
   const researchContext = state.researchContext;
   if (!researchContext || !researchContext.results || researchContext.results.length === 0) {
-    return basePrompt;
+    return basePrompt + instructions + skillContext;
   }
 
   const researchSummary = researchContext.results
@@ -554,7 +636,7 @@ export function buildSynthesisSystemPrompt(state) {
     })
     .join('\n\n');
 
-  return `${basePrompt}\n\n## Research Context\n\nThe following research has been gathered to help answer the user's question:\n\n${researchSummary}`;
+  return `${basePrompt}${instructions}${skillContext}\n\n## Research Context\n\nThe following research has been gathered to help answer the user's question:\n\n${researchSummary}`;
 }
 
 /**
@@ -658,6 +740,13 @@ export async function synthesisLoop(state, callbacks) {
  * Main orchestration entry point. Replaces LangGraph StateGraph.
  * Executes nodes in order: Preflight → Skill Loading → Skill Router → path execution.
  *
+ * Enhanced with:
+ * - Tracing hooks (createTrace, startSpan/endSpan per phase, flushTracing on completion)
+ * - Structured logging (logLLMCall after Bedrock calls, logRequestComplete at end)
+ * - Client_Tag extraction from Jira context in query
+ * - Context compaction check before synthesis
+ * - Plan-awareness: inform LLM of existing session plans (IDs and titles only)
+ *
  * @param {AgentState} state - Current agent state
  * @param {CallbackInterface} callbacks - SSE event emitters
  * @returns {Promise<AgentState>} Final state after execution
@@ -666,22 +755,100 @@ export async function runAgentLoop(state, callbacks) {
   // Validate and normalize callbacks — ensures no crashes from missing callbacks
   callbacks = validateCallbacks(callbacks);
 
+  const requestStartTime = Date.now();
+  let llmCallCount = 0;
+  let totalInputTokens = 0;
+  let totalOutputTokens = 0;
+
+  // Extract Client_Tag from query text (Jira project key)
+  const problemText = state.problemText || '';
+  const clientTag = state.clientTag || extractClientTag(problemText) || 'untagged';
+  state = { ...state, clientTag };
+
+  // Generate a request ID for tracing/logging
+  const requestId = state.requestId || `req_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  state = { ...state, requestId };
+
+  // Create a LangFuse trace for this request
+  const trace = createTrace({
+    requestId,
+    userId: state.userId || 'anonymous',
+    sessionId: state.sessionId || 'unknown',
+    clientTag,
+    queryText: problemText,
+  });
+
   try {
     // 1. Preflight phase
     callbacks.onPhase('preflight');
+    const preflightSpan = startSpan(trace, 'preflight', { query: problemText });
     state = await preflightNode(state);
+    endSpan(preflightSpan, { onTopic: state.onTopic, intent: state.intent, skillIds: state.skillIds });
 
     // 2. Off-topic early termination
     if (!state.onTopic) {
       callbacks.onPhase('refusal');
-      callbacks.onToken(REFUSAL_MESSAGE);
-      callbacks.onComplete(REFUSAL_MESSAGE);
+      const refusalSpan = startSpan(trace, 'refusal', { reason: 'off-topic' });
+
+      // Generate a dynamic, quirky refusal via Haiku (cheap and fast)
+      let refusalText = REFUSAL_MESSAGE;
+      try {
+        const userQuery = state.messages.length > 0
+          ? state.messages[state.messages.length - 1].content
+          : '';
+        const refusalStart = Date.now();
+        const response = await createMessage({
+          model: 'haiku',
+          system: REFUSAL_SYSTEM_PROMPT,
+          messages: [{ role: 'user', content: userQuery }],
+          maxTokens: 100,
+        });
+        const refusalLatency = Date.now() - refusalStart;
+        llmCallCount++;
+        if (response.usage) {
+          totalInputTokens += response.usage.input_tokens || 0;
+          totalOutputTokens += response.usage.output_tokens || 0;
+        }
+        logLLMCall({
+          model: 'haiku',
+          input_tokens: response.usage?.input_tokens || 0,
+          output_tokens: response.usage?.output_tokens || 0,
+          latency_ms: refusalLatency,
+          client_tag: clientTag,
+          session_id: state.sessionId || 'unknown',
+          request_id: requestId,
+        });
+        const textBlock = response.content.find(b => b.type === 'text');
+        if (textBlock && textBlock.text && textBlock.text.trim()) {
+          refusalText = textBlock.text.trim();
+        }
+      } catch (e) {
+        // Fall back to static message if Haiku fails
+      }
+
+      endSpan(refusalSpan, { refusalText });
+      callbacks.onToken(refusalText);
+      callbacks.onComplete(refusalText);
+
+      // Log request completion and flush tracing
+      logRequestComplete({
+        total_latency_ms: Date.now() - requestStartTime,
+        total_input_tokens: totalInputTokens,
+        total_output_tokens: totalOutputTokens,
+        llm_call_count: llmCallCount,
+        client_tag: clientTag,
+        session_id: state.sessionId || 'unknown',
+        request_id: requestId,
+      });
+      await flushTracing();
       return state;
     }
 
     // 3. Skill loading phase
     callbacks.onPhase('skill_loading');
+    const skillSpan = startSpan(trace, 'skill_loading', { skillIds: state.skillIds });
     state = await loadSkillsNode(state, callbacks);
+    endSpan(skillSpan, { loadedSkills: (state.skills || []).map(s => s.id) });
 
     // 4. Skill routing
     state = skillRouterNode(state);
@@ -689,27 +856,137 @@ export async function runAgentLoop(state, callbacks) {
     // 5. Path execution based on executionMode
     if (state.executionMode === 'multi-node') {
       callbacks.onPhase('multi_node');
+      const multiNodeSpan = startSpan(trace, 'multi_node', { toolTags: state.toolTags });
       state = await multiNodePath(state, callbacks);
+      endSpan(multiNodeSpan, { toolCount: (state.availableTools || []).length });
     } else {
       callbacks.onPhase('research');
+      const researchSpan = startSpan(trace, 'research', { toolTags: state.toolTags });
       state = await parallelResearchNode(state, callbacks);
 
       // 5b. Sequential fallback if parallel research failed completely
       if (state.fallbackToSequential) {
         state = await sequentialResearchFallback(state, callbacks);
       }
+      endSpan(researchSpan, {
+        successCount: state.researchContext?.successCount || 0,
+        failureCount: state.researchContext?.failureCount || 0,
+      });
     }
 
-    // 6. Synthesis phase — ensure tools are available
+    // 6. Compaction check before synthesis
+    let compactionOccurred = false;
+    if (state.messages && shouldCompact(state.messages)) {
+      const compactionSpan = startSpan(trace, 'compaction', { messageCount: state.messages.length });
+      const tokensBefore = estimateTokenCount(state.messages);
+      const turnRangeStart = 1;
+      const turnRangeEnd = state.messages.length;
+
+      try {
+        const compactionResult = await compactHistory(state.messages);
+        if (compactionResult.summary) {
+          const compactedMessages = buildCompactedContext(compactionResult.summary, compactionResult.recentMessages);
+          const tokensAfter = estimateTokenCount(compactedMessages);
+
+          // Store compaction metadata on state
+          state = {
+            ...state,
+            messages: compactedMessages,
+            compactedHistory: compactionResult.summary,
+            originalMessages: state.messages, // Preserve originals (not mutated)
+          };
+          compactionOccurred = true;
+
+          // Log the compaction event
+          logEvent('info', 'context_compaction', {
+            session_id: state.sessionId || 'unknown',
+            turn_range_start: turnRangeStart,
+            turn_range_end: turnRangeEnd,
+            tokens_before: tokensBefore,
+            tokens_after: tokensAfter,
+          });
+        }
+      } catch (compactionError) {
+        // Fail-open: skip compaction if it fails, continue with full history
+        logEvent('warn', 'compaction_failed', {
+          session_id: state.sessionId || 'unknown',
+          error: compactionError.message,
+        });
+      }
+      endSpan(compactionSpan, { compactionOccurred });
+    }
+
+    // 7. Plan-awareness: inform LLM of existing session plans (IDs and titles only)
+    let planContext = '';
+    if (state.sessionId) {
+      try {
+        const existingPlans = listSessionPlans(state.sessionId);
+        if (existingPlans.length > 0) {
+          const planList = existingPlans
+            .map(p => `- Plan "${p.title}" (ID: ${p.planId}, ${p.completedCount}/${p.taskCount} tasks done)`)
+            .join('\n');
+          planContext = `\n\n## Existing Plans for This Session\n\nThe following plans exist for this session. Use read_plan to view details if relevant:\n${planList}`;
+        }
+      } catch {
+        // Non-critical: if plan listing fails, continue without plan context
+      }
+    }
+
+    // 8. Add compaction notification and plan instruction to state
+    let contextAdditions = '';
+    if (compactionOccurred) {
+      contextAdditions += '\n\n## Context Notice\n\nEarlier conversation turns have been summarized to fit within the context window. Use the lookup_chat_history tool if you need verbatim details from earlier turns.';
+    }
+    if (planContext) {
+      contextAdditions += planContext;
+    }
+    // Instruct LLM to use create_plan for complex queries
+    contextAdditions += '\n\n## Plan Instruction\n\nFor complex queries requiring multiple steps or tool calls, use the create_plan tool to create a structured execution plan before proceeding.';
+
+    if (contextAdditions) {
+      state = {
+        ...state,
+        systemPrompt: (state.systemPrompt || 'You are a helpful Technical Account Manager agent.') + contextAdditions,
+      };
+    }
+
+    // 9. Synthesis phase — ensure tools are available
     if (!state.availableTools || state.availableTools.length === 0) {
       state = { ...state, availableTools: getToolDefinitions(state.toolTags) };
     }
     callbacks.onPhase('synthesis');
+    const synthesisSpan = startSpan(trace, 'synthesis', { toolCount: (state.availableTools || []).length });
     state = await synthesisLoop(state, callbacks);
+    endSpan(synthesisSpan, { finalResponseReceived: !!state.finalResponse });
+
+    // 10. Log request completion and flush tracing
+    logRequestComplete({
+      total_latency_ms: Date.now() - requestStartTime,
+      total_input_tokens: totalInputTokens,
+      total_output_tokens: totalOutputTokens,
+      llm_call_count: llmCallCount,
+      client_tag: clientTag,
+      session_id: state.sessionId || 'unknown',
+      request_id: requestId,
+    });
+    await flushTracing();
 
     return state;
   } catch (error) {
     callbacks.onError(error);
+
+    // Log request completion even on error
+    logRequestComplete({
+      total_latency_ms: Date.now() - requestStartTime,
+      total_input_tokens: totalInputTokens,
+      total_output_tokens: totalOutputTokens,
+      llm_call_count: llmCallCount,
+      client_tag: clientTag,
+      session_id: state.sessionId || 'unknown',
+      request_id: requestId,
+    });
+    await flushTracing();
+
     return state;
   }
 }

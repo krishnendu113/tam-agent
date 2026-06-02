@@ -22,6 +22,41 @@ vi.mock('../tools/index.js', () => ({
   ]),
 }));
 
+// Mock the skillLoader module
+vi.mock('../skillLoader.js', () => ({
+  getSkillSummary: vi.fn(() => null),
+  getRegistryTriggers: vi.fn(() => new Map()),
+}));
+
+// Mock new modules added by skill-system-enhancement
+vi.mock('../compaction.js', () => ({
+  shouldCompact: vi.fn(() => false),
+  compactHistory: vi.fn(),
+  buildCompactedContext: vi.fn(),
+  estimateTokenCount: vi.fn(() => 0),
+}));
+
+vi.mock('../tracing.js', () => ({
+  createTrace: vi.fn(() => ({})),
+  startSpan: vi.fn(() => ({})),
+  endSpan: vi.fn(),
+  flushTracing: vi.fn(async () => {}),
+}));
+
+vi.mock('../logger.js', () => ({
+  logLLMCall: vi.fn(),
+  logRequestComplete: vi.fn(),
+  logEvent: vi.fn(),
+}));
+
+vi.mock('../clientTag.js', () => ({
+  extractClientTag: vi.fn(() => null),
+}));
+
+vi.mock('../planManager.js', () => ({
+  listSessionPlans: vi.fn(() => []),
+}));
+
 import { createMessage } from '../llm.js';
 import { executeTool, getToolDefinitions } from '../tools/index.js';
 

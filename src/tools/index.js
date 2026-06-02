@@ -5,6 +5,10 @@ import { confluenceTool, confluenceGetPageTool } from './confluence.js';
 import { kapaTool } from './kapa.js';
 import { webSearchTool } from './webSearch.js';
 import { docsSearchTool } from './docsSearch.js';
+import { loadSkillReferenceTool, listSkillReferencesTool } from './skillReference.js';
+import { createPlanTool, updatePlanTaskTool, readPlanTool } from './planTools.js';
+import { delegateToSubagentTool } from './subAgent.js';
+import { lookupChatHistoryTool, getSessionSummaryTool } from './chatHistory.js';
 
 /**
  * Registry of all available tools.
@@ -75,5 +79,21 @@ registerTool(confluenceGetPageTool);
 registerTool(kapaTool);
 registerTool(webSearchTool);
 registerTool(docsSearchTool);
+
+// Register skill reference tools
+registerTool(loadSkillReferenceTool);
+registerTool(listSkillReferencesTool);
+
+// Register plan tools
+registerTool(createPlanTool);
+registerTool(updatePlanTaskTool);
+registerTool(readPlanTool);
+
+// Register sub-agent tool
+registerTool(delegateToSubagentTool);
+
+// Register chat history tools
+registerTool(lookupChatHistoryTool);
+registerTool(getSessionSummaryTool);
 
 export default { registerTool, getAllTools, getToolsByTags, executeTool, getToolDefinitions };

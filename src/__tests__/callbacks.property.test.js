@@ -9,7 +9,8 @@ vi.mock('../llm.js', () => ({
 
 // Mock the skillLoader module
 vi.mock('../skillLoader.js', () => ({
-  loadSkillsById: vi.fn(() => []),
+  getSkillSummary: vi.fn(() => null),
+  getRegistryTriggers: vi.fn(() => new Map()),
 }));
 
 // Mock the tools module
@@ -18,8 +19,37 @@ vi.mock('../tools/index.js', () => ({
   getToolDefinitions: vi.fn(() => []),
 }));
 
+// Mock new modules added by skill-system-enhancement
+vi.mock('../compaction.js', () => ({
+  shouldCompact: vi.fn(() => false),
+  compactHistory: vi.fn(),
+  buildCompactedContext: vi.fn(),
+  estimateTokenCount: vi.fn(() => 0),
+}));
+
+vi.mock('../tracing.js', () => ({
+  createTrace: vi.fn(() => ({})),
+  startSpan: vi.fn(() => ({})),
+  endSpan: vi.fn(),
+  flushTracing: vi.fn(async () => {}),
+}));
+
+vi.mock('../logger.js', () => ({
+  logLLMCall: vi.fn(),
+  logRequestComplete: vi.fn(),
+  logEvent: vi.fn(),
+}));
+
+vi.mock('../clientTag.js', () => ({
+  extractClientTag: vi.fn(() => null),
+}));
+
+vi.mock('../planManager.js', () => ({
+  listSessionPlans: vi.fn(() => []),
+}));
+
 import { createMessage, streamMessage } from '../llm.js';
-import { loadSkillsById } from '../skillLoader.js';
+import { getSkillSummary } from '../skillLoader.js';
 import { runAgentLoop } from '../agentLoop.js';
 
 // --- Generators ---
@@ -136,14 +166,14 @@ describe('Feature: tam-agent-migration, Property 17: Phase Transition Callbacks'
       fc.asyncProperty(arbAgentState(), async (state) => {
         // Reset mocks between iterations
         createMessage.mockReset();
-        loadSkillsById.mockReset();
+        getSkillSummary.mockReset();
         streamMessage.mockReset();
 
         // Mock preflight to return on-topic classification
         createMessage.mockResolvedValue(makeOnTopicLlmResponse());
 
-        // Mock loadSkillsById to return empty (research path)
-        loadSkillsById.mockReturnValue([]);
+        // Mock getSkillSummary to return empty (research path)
+        getSkillSummary.mockReturnValue(null);
 
         // Mock streamMessage to return a valid stream for synthesis
         streamMessage.mockReturnValue(createMockStream('Test response'));
@@ -174,7 +204,7 @@ describe('Feature: tam-agent-migration, Property 17: Phase Transition Callbacks'
       fc.asyncProperty(arbAgentState(), async (state) => {
         // Reset mocks between iterations
         createMessage.mockReset();
-        loadSkillsById.mockReset();
+        getSkillSummary.mockReset();
         streamMessage.mockReset();
 
         // Mock preflight to return on-topic with skillIds
@@ -190,8 +220,8 @@ describe('Feature: tam-agent-migration, Property 17: Phase Transition Callbacks'
           usage: { input_tokens: 50, output_tokens: 30 },
         });
 
-        // Mock loadSkillsById to return a skill (triggers multi-node path)
-        loadSkillsById.mockReturnValue([{ id: 'troubleshooting', name: 'Troubleshooting' }]);
+        // Mock getSkillSummary to return a skill (triggers multi-node path)
+        getSkillSummary.mockImplementation((id) => id === 'troubleshooting' ? { id: 'troubleshooting', name: 'Troubleshooting', description: 'Helps', referenceFiles: [] } : null);
 
         // Mock streamMessage for synthesis
         streamMessage.mockReturnValue(createMockStream('Skill response'));
@@ -234,10 +264,10 @@ describe('Feature: tam-agent-migration, Property 18: Unrecoverable Error Handlin
       fc.asyncProperty(arbAgentState(), arbErrorMessage(), async (state, errorMsg) => {
         // Reset mocks between iterations
         createMessage.mockReset();
-        loadSkillsById.mockReset();
+        getSkillSummary.mockReset();
         streamMessage.mockReset();
 
-        // Mock preflight to return on-topic with skillIds so loadSkillsById is called
+        // Mock preflight to return on-topic with skillIds so getSkillSummary is called
         createMessage.mockResolvedValue({
           role: 'assistant',
           content: [{ type: 'text', text: JSON.stringify({
@@ -250,9 +280,9 @@ describe('Feature: tam-agent-migration, Property 18: Unrecoverable Error Handlin
           usage: { input_tokens: 50, output_tokens: 30 },
         });
 
-        // Make loadSkillsById throw an unrecoverable error
+        // Make getSkillSummary throw an unrecoverable error
         // This happens AFTER preflight, so it will be caught by runAgentLoop's try/catch
-        loadSkillsById.mockImplementation(() => {
+        getSkillSummary.mockImplementation(() => {
           throw new Error(errorMsg);
         });
 
@@ -268,7 +298,7 @@ describe('Feature: tam-agent-migration, Property 18: Unrecoverable Error Handlin
 
         // No further phases should execute after the error
         // Only 'preflight' and 'skill_loading' should have been called
-        // (skill_loading is called before loadSkillsById throws inside loadSkillsNode)
+        // (skill_loading is called before getSkillSummary throws inside loadSkillsNode)
         expect(phases).toContain('preflight');
         expect(phases).toContain('skill_loading');
         // research, multi_node, and synthesis should NOT be invoked
@@ -294,14 +324,14 @@ describe('Feature: tam-agent-migration, Property 18: Unrecoverable Error Handlin
       fc.asyncProperty(arbAgentState(), arbErrorMessage(), async (state, errorMsg) => {
         // Reset mocks between iterations
         createMessage.mockReset();
-        loadSkillsById.mockReset();
+        getSkillSummary.mockReset();
         streamMessage.mockReset();
 
         // Mock preflight to return on-topic
         createMessage.mockResolvedValue(makeOnTopicLlmResponse());
 
-        // Mock loadSkillsById to return empty (research path)
-        loadSkillsById.mockReturnValue([]);
+        // Mock getSkillSummary to return empty (research path)
+        getSkillSummary.mockReturnValue(null);
 
         // Make streamMessage throw an error during synthesis
         streamMessage.mockImplementation(() => {

@@ -19,13 +19,30 @@ vi.mock('../llm.js', () => ({
 
 // Mock the skillLoader module
 vi.mock('../skillLoader.js', () => ({
-  loadSkillsById: vi.fn(() => []),
+  getSkillSummary: vi.fn(() => null),
+  getRegistryTriggers: vi.fn(() => new Map()),
 }));
 
 // Mock the tools module
 vi.mock('../tools/index.js', () => ({
   executeTool: vi.fn(),
   getToolDefinitions: vi.fn(() => []),
+}));
+
+// Mock the db module for enhancedAuthMiddleware and conversation persistence
+const mockInsertOne = vi.fn().mockResolvedValue({ insertedId: { toString: () => 'mock-conv-id' } });
+const mockUpdateOne = vi.fn().mockResolvedValue({ modifiedCount: 1 });
+const mockFindOneUser = vi.fn().mockResolvedValue({ email: 'test@capillarytech.com', name: 'Test User', role: 'user', status: 'active' });
+const mockCollection = vi.fn((name) => ({
+  findOne: mockFindOneUser,
+  insertOne: mockInsertOne,
+  updateOne: mockUpdateOne,
+  createIndex: vi.fn().mockResolvedValue('ok'),
+}));
+
+vi.mock('../db.js', () => ({
+  getDb: () => ({ collection: mockCollection }),
+  connectDb: vi.fn().mockResolvedValue({}),
 }));
 
 import jwt from 'jsonwebtoken';
@@ -88,6 +105,8 @@ describe('Server — POST /api/chat', () => {
     expect(text).toContain('event: phase');
     expect(text).toContain('event: token');
     expect(text).toContain('event: complete');
+    // Verify conversationId is included in complete event
+    expect(text).toContain('"conversationId"');
   });
 
   it('calls runAgentLoop with correct state from request body', async () => {
@@ -132,7 +151,8 @@ describe('Server — POST /api/chat', () => {
     expect(response.status).toBe(200);
 
     const [state] = runAgentLoop.mock.calls[0];
-    expect(state.conversationId).toBeNull();
+    // When conversationId is missing, a new one is created from DB
+    expect(state.conversationId).toBe('mock-conv-id');
     expect(state.messages).toEqual([]);
     expect(state.systemPrompt).toBe('');
     expect(state.problemText).toBe('');
@@ -158,6 +178,89 @@ describe('Server — POST /api/chat', () => {
     const text = await response.text();
     expect(text).toContain('event: error');
     expect(text).toContain('LLM service unavailable');
+  });
+
+  it('creates a new conversation when conversationId is null', async () => {
+    const response = await fetch(`${baseUrl}/api/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${testToken}` },
+      body: JSON.stringify({
+        conversationId: null,
+        messages: [{ role: 'user', content: 'Hello, this is my first message to the agent' }],
+        systemPrompt: 'You are helpful.',
+        problemText: 'Hello',
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    const text = await response.text();
+
+    // Verify conversation was created in DB
+    expect(mockCollection).toHaveBeenCalledWith('conversations');
+    expect(mockInsertOne).toHaveBeenCalledWith(expect.objectContaining({
+      userId: 'test@capillarytech.com',
+      title: 'Hello, this is my first message to the agent',
+      messages: [],
+    }));
+
+    // Verify conversationId is returned in complete event
+    expect(text).toContain('"conversationId":"mock-conv-id"');
+  });
+
+  it('appends messages to conversation on complete', async () => {
+    const { ObjectId } = await import('mongodb');
+    const existingConvId = new ObjectId().toHexString();
+
+    const response = await fetch(`${baseUrl}/api/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${testToken}` },
+      body: JSON.stringify({
+        conversationId: existingConvId,
+        messages: [{ role: 'user', content: 'What is the weather?' }],
+        systemPrompt: '',
+        problemText: 'weather',
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    const text = await response.text();
+
+    // Verify messages were appended to the conversation
+    expect(mockUpdateOne).toHaveBeenCalledWith(
+      expect.objectContaining({}),
+      expect.objectContaining({
+        $push: { messages: { $each: expect.arrayContaining([
+          expect.objectContaining({ role: 'user', content: 'What is the weather?' }),
+          expect.objectContaining({ role: 'assistant', content: 'Hello' }),
+        ]) } },
+        $set: { updatedAt: expect.any(Date) },
+      })
+    );
+
+    // Verify conversationId is in the complete event
+    expect(text).toContain(`"conversationId":"${existingConvId}"`);
+  });
+
+  it('generates title from first 50 chars of first user message', async () => {
+    const longMessage = 'This is a very long message that exceeds fifty characters and should be truncated for the title';
+
+    const response = await fetch(`${baseUrl}/api/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${testToken}` },
+      body: JSON.stringify({
+        conversationId: null,
+        messages: [{ role: 'user', content: longMessage }],
+        systemPrompt: '',
+        problemText: '',
+      }),
+    });
+
+    expect(response.status).toBe(200);
+
+    // Verify title is truncated to 50 chars
+    expect(mockInsertOne).toHaveBeenCalledWith(expect.objectContaining({
+      title: longMessage.substring(0, 50).trim(),
+    }));
   });
 });
 

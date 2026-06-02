@@ -12,17 +12,20 @@
     "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
+    "@aws-sdk/client-apprunner": "^3.1058.0",
     "@aws-sdk/client-bedrock-runtime": "^3.700.0",
-    "express": "^4.21.0",
-    "mongodb": "^6.10.0",
-    "multer": "^1.4.5-lts.1",
+    "@aws-sdk/client-docdb": "^3.1058.0",
+    "bcrypt": "^5.1.1",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
+    "express": "^4.21.0",
     "helmet": "^8.0.0",
+    "jsonwebtoken": "^9.0.2",
+    "langfuse": "3.38.20",
+    "mongodb": "^6.10.0",
     "morgan": "^1.10.0",
-    "uuid": "^10.0.0",
-    "bcrypt": "^5.1.1",
-    "jsonwebtoken": "^9.0.2"
+    "multer": "^1.4.5-lts.1",
+    "uuid": "^10.0.0"
   },
   "devDependencies": {
     "fast-check": "^3.22.0",

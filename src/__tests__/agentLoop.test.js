@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { preflightNode, parsePreflightResponse, validatePreflightResult, FAIL_OPEN_RESULT, PREFLIGHT_SYSTEM_PROMPT } from '../agentLoop.js';
+import { preflightNode, parsePreflightResponse, validatePreflightResult, FAIL_OPEN_RESULT, PREFLIGHT_SYSTEM_PROMPT, matchTriggerSkills } from '../agentLoop.js';
 
 // Mock the llm module
 vi.mock('../llm.js', () => ({
@@ -8,10 +8,18 @@ vi.mock('../llm.js', () => ({
 
 // Mock the skillLoader module (imported by agentLoop.js)
 vi.mock('../skillLoader.js', () => ({
-  loadSkillsById: vi.fn(() => []),
+  getSkillSummary: vi.fn(() => null),
+  getRegistryTriggers: vi.fn(() => new Map([
+    ['cr-evaluator', ['cr', 'change request', 'feasibility', 'brd', 'requirement']],
+    ['pm-pipeline', ['create brd', 'brd', 'run discovery', 'generate jira', 'pm pipeline']],
+    ['capillary-sdd-writer', ['sdd', 'system design document', 'lld', 'low level design', 'technical spec']],
+    ['solution-gap-analyzer', ['gap', 'gap analysis', 'brd', 'business requirements', 'coverage', 'feature analysis']],
+    ['excalidraw-diagram', ['diagram', 'flow diagram', 'architecture diagram', 'excalidraw', 'flowchart', 'visual']],
+  ])),
 }));
 
 import { createMessage } from '../llm.js';
+import { getRegistryTriggers } from '../skillLoader.js';
 
 describe('Preflight Gate — preflightNode', () => {
   beforeEach(() => {
@@ -482,5 +490,166 @@ describe('FAIL_OPEN_RESULT', () => {
       toolTags: [],
       skillIds: [],
     });
+  });
+});
+
+describe('matchTriggerSkills', () => {
+  it('returns matching skill IDs when query contains trigger keywords', () => {
+    const result = matchTriggerSkills('I need to create a BRD for this project');
+    expect(result).toContain('cr-evaluator');
+    expect(result).toContain('pm-pipeline');
+    expect(result).toContain('solution-gap-analyzer');
+  });
+
+  it('performs case-insensitive matching', () => {
+    const result = matchTriggerSkills('Generate an SDD document');
+    expect(result).toContain('capillary-sdd-writer');
+  });
+
+  it('returns empty array when no triggers match', () => {
+    const result = matchTriggerSkills('What is the weather today?');
+    expect(result).toEqual([]);
+  });
+
+  it('returns empty array for empty string', () => {
+    expect(matchTriggerSkills('')).toEqual([]);
+  });
+
+  it('returns empty array for null/undefined input', () => {
+    expect(matchTriggerSkills(null)).toEqual([]);
+    expect(matchTriggerSkills(undefined)).toEqual([]);
+  });
+
+  it('returns empty array for non-string input', () => {
+    expect(matchTriggerSkills(123)).toEqual([]);
+  });
+
+  it('matches multi-word triggers', () => {
+    const result = matchTriggerSkills('Can you run a gap analysis on this?');
+    expect(result).toContain('solution-gap-analyzer');
+  });
+
+  it('matches diagram trigger keywords', () => {
+    const result = matchTriggerSkills('Draw a flowchart for the auth process');
+    expect(result).toContain('excalidraw-diagram');
+  });
+
+  it('returns multiple skills when multiple triggers match', () => {
+    // "brd" appears in both cr-evaluator, pm-pipeline, and solution-gap-analyzer
+    const result = matchTriggerSkills('evaluate this brd document');
+    expect(result.length).toBeGreaterThanOrEqual(3);
+    expect(result).toContain('cr-evaluator');
+    expect(result).toContain('pm-pipeline');
+    expect(result).toContain('solution-gap-analyzer');
+  });
+});
+
+describe('preflightNode — trigger skill merging', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('merges trigger-matched skills with LLM-classified skills', async () => {
+    createMessage.mockResolvedValue({
+      role: 'assistant',
+      content: [{ type: 'text', text: JSON.stringify({
+        onTopic: true,
+        intent: 'create a BRD',
+        toolTags: ['jira'],
+        skillIds: ['custom-skill'],
+      }) }],
+      stop_reason: 'end_turn',
+      usage: { input_tokens: 50, output_tokens: 30 },
+    });
+
+    const state = {
+      messages: [{ role: 'user', content: 'Create a BRD for client X' }],
+      problemText: 'Create a BRD for client X',
+    };
+
+    const result = await preflightNode(state);
+
+    // Should include LLM-classified skill and trigger-matched skills
+    expect(result.skillIds).toContain('custom-skill');
+    expect(result.skillIds).toContain('cr-evaluator');
+    expect(result.skillIds).toContain('pm-pipeline');
+    expect(result.skillIds).toContain('solution-gap-analyzer');
+  });
+
+  it('deduplicates skill IDs from LLM and trigger matching', async () => {
+    createMessage.mockResolvedValue({
+      role: 'assistant',
+      content: [{ type: 'text', text: JSON.stringify({
+        onTopic: true,
+        intent: 'create a diagram',
+        toolTags: [],
+        skillIds: ['excalidraw-diagram'],
+      }) }],
+      stop_reason: 'end_turn',
+      usage: { input_tokens: 50, output_tokens: 30 },
+    });
+
+    const state = {
+      messages: [{ role: 'user', content: 'Draw me a diagram of the system' }],
+      problemText: 'Draw me a diagram of the system',
+    };
+
+    const result = await preflightNode(state);
+
+    // excalidraw-diagram should appear only once (deduplicated)
+    const excalidrawCount = result.skillIds.filter(id => id === 'excalidraw-diagram').length;
+    expect(excalidrawCount).toBe(1);
+    expect(result.skillIds).toContain('excalidraw-diagram');
+  });
+
+  it('returns only trigger-matched skills when LLM returns empty skillIds', async () => {
+    createMessage.mockResolvedValue({
+      role: 'assistant',
+      content: [{ type: 'text', text: JSON.stringify({
+        onTopic: true,
+        intent: 'create SDD',
+        toolTags: [],
+        skillIds: [],
+      }) }],
+      stop_reason: 'end_turn',
+      usage: { input_tokens: 50, output_tokens: 30 },
+    });
+
+    const state = {
+      messages: [{ role: 'user', content: 'I need a system design document' }],
+      problemText: 'I need a system design document',
+    };
+
+    const result = await preflightNode(state);
+
+    expect(result.skillIds).toContain('capillary-sdd-writer');
+  });
+
+  it('returns only LLM skills when no trigger keywords match', async () => {
+    createMessage.mockResolvedValue({
+      role: 'assistant',
+      content: [{ type: 'text', text: JSON.stringify({
+        onTopic: true,
+        intent: 'troubleshoot issue',
+        toolTags: ['jira'],
+        skillIds: ['troubleshooting'],
+      }) }],
+      stop_reason: 'end_turn',
+      usage: { input_tokens: 50, output_tokens: 30 },
+    });
+
+    const state = {
+      messages: [{ role: 'user', content: 'Help me fix the login issue' }],
+      problemText: 'Help me fix the login issue',
+    };
+
+    const result = await preflightNode(state);
+
+    expect(result.skillIds).toEqual(['troubleshooting']);
   });
 });

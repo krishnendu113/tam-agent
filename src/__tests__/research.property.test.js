@@ -8,7 +8,8 @@ vi.mock('../llm.js', () => ({
 
 // Mock the skillLoader module
 vi.mock('../skillLoader.js', () => ({
-  loadSkillsById: vi.fn(() => []),
+  getSkillSummary: vi.fn(() => null),
+  getRegistryTriggers: vi.fn(() => new Map()),
 }));
 
 // Mock the tools module
@@ -17,8 +18,37 @@ vi.mock('../tools/index.js', () => ({
   getToolDefinitions: vi.fn(() => []),
 }));
 
+// Mock new modules added by skill-system-enhancement
+vi.mock('../compaction.js', () => ({
+  shouldCompact: vi.fn(() => false),
+  compactHistory: vi.fn(),
+  buildCompactedContext: vi.fn(),
+  estimateTokenCount: vi.fn(() => 0),
+}));
+
+vi.mock('../tracing.js', () => ({
+  createTrace: vi.fn(() => ({})),
+  startSpan: vi.fn(() => ({})),
+  endSpan: vi.fn(),
+  flushTracing: vi.fn(async () => {}),
+}));
+
+vi.mock('../logger.js', () => ({
+  logLLMCall: vi.fn(),
+  logRequestComplete: vi.fn(),
+  logEvent: vi.fn(),
+}));
+
+vi.mock('../clientTag.js', () => ({
+  extractClientTag: vi.fn(() => null),
+}));
+
+vi.mock('../planManager.js', () => ({
+  listSessionPlans: vi.fn(() => []),
+}));
+
 import { createMessage } from '../llm.js';
-import { loadSkillsById } from '../skillLoader.js';
+import { getSkillSummary } from '../skillLoader.js';
 import { executeTool, getToolDefinitions } from '../tools/index.js';
 import {
   parallelResearchNode,
@@ -294,8 +324,8 @@ describe('Feature: tam-agent-migration, Property 12: Parallel Research Fallback'
         async (domainResults) => {
           // Reset mocks between iterations
           createMessage.mockReset();
-          loadSkillsById.mockReset();
-          loadSkillsById.mockReturnValue([]);
+          getSkillSummary.mockReset();
+          getSkillSummary.mockReturnValue(null);
 
           let callIndex = 0;
 

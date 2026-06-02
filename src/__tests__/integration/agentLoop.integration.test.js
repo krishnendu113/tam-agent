@@ -1,22 +1,73 @@
 import { describe, it, expect, beforeEach, afterEach, beforeAll, afterAll, vi } from 'vitest';
 import jwt from 'jsonwebtoken';
 
-// Mock external dependencies (LLM, skills, tools)
+// Mock external dependencies (LLM, skills, tools, db)
 vi.mock('../../llm.js', () => ({
   createMessage: vi.fn(),
   streamMessage: vi.fn(),
 }));
 vi.mock('../../skillLoader.js', () => ({
-  loadSkillsById: vi.fn(() => []),
+  getSkillSummary: vi.fn(() => null),
+  getRegistryTriggers: vi.fn(() => new Map()),
 }));
 vi.mock('../../tools/index.js', () => ({
   executeTool: vi.fn(),
   getToolDefinitions: vi.fn(() => []),
 }));
+vi.mock('../../db.js', () => {
+  const mockFindOne = vi.fn().mockResolvedValue(
+    { email: 'test@capillarytech.com', name: 'Test User', role: 'user', status: 'active' }
+  );
+  const mockFind = vi.fn().mockReturnValue({
+    sort: vi.fn().mockReturnValue({
+      toArray: vi.fn().mockResolvedValue([]),
+    }),
+  });
+  const mockCollection = vi.fn(() => ({
+    findOne: mockFindOne,
+    find: mockFind,
+    insertOne: vi.fn().mockResolvedValue({ insertedId: 'mock-conv-id' }),
+    updateOne: vi.fn().mockResolvedValue({ modifiedCount: 1 }),
+    createIndex: vi.fn().mockResolvedValue(undefined),
+  }));
+  return {
+    connectDb: vi.fn().mockResolvedValue(undefined),
+    getDb: () => ({ collection: mockCollection }),
+  };
+});
+
+// Mock new modules added by skill-system-enhancement
+vi.mock('../../compaction.js', () => ({
+  shouldCompact: vi.fn(() => false),
+  compactHistory: vi.fn(),
+  buildCompactedContext: vi.fn(),
+  estimateTokenCount: vi.fn(() => 0),
+}));
+
+vi.mock('../../tracing.js', () => ({
+  createTrace: vi.fn(() => ({})),
+  startSpan: vi.fn(() => ({})),
+  endSpan: vi.fn(),
+  flushTracing: vi.fn(async () => {}),
+}));
+
+vi.mock('../../logger.js', () => ({
+  logLLMCall: vi.fn(),
+  logRequestComplete: vi.fn(),
+  logEvent: vi.fn(),
+}));
+
+vi.mock('../../clientTag.js', () => ({
+  extractClientTag: vi.fn(() => null),
+}));
+
+vi.mock('../../planManager.js', () => ({
+  listSessionPlans: vi.fn(() => []),
+}));
 
 import { createMessage, streamMessage } from '../../llm.js';
 import { executeTool, getToolDefinitions } from '../../tools/index.js';
-import { loadSkillsById } from '../../skillLoader.js';
+import { getSkillSummary } from '../../skillLoader.js';
 import { runAgentLoop } from '../../agentLoop.js';
 import { app } from '../../server.js';
 
@@ -178,7 +229,7 @@ describe('Integration: End-to-End Agent Loop', () => {
       });
 
       getToolDefinitions.mockReturnValue([]);
-      loadSkillsById.mockReturnValue([]);
+      getSkillSummary.mockReturnValue(null);
 
       // Synthesis stream returns a final text response
       streamMessage.mockReturnValue(createMockTextStream('Based on my research, here is the answer to your question.'));
@@ -291,7 +342,7 @@ describe('Integration: End-to-End Agent Loop', () => {
         return mockResearchResponse('jira');
       });
 
-      loadSkillsById.mockReturnValue([]);
+      getSkillSummary.mockReturnValue(null);
       getToolDefinitions.mockReturnValue([
         { name: 'search_jira', description: 'Search Jira issues', input_schema: { type: 'object', properties: { query: { type: 'string' } } } },
       ]);
@@ -397,7 +448,7 @@ describe('Integration: SSE Streaming from Express Server', () => {
       return mockResearchResponse('jira');
     });
 
-    loadSkillsById.mockReturnValue([]);
+    getSkillSummary.mockReturnValue(null);
     getToolDefinitions.mockReturnValue([]);
 
     // Synthesis: stream final text
@@ -489,7 +540,7 @@ describe('Integration: SSE Streaming from Express Server', () => {
       return mockResearchResponse('jira');
     });
 
-    loadSkillsById.mockReturnValue([]);
+    getSkillSummary.mockReturnValue(null);
     getToolDefinitions.mockReturnValue([
       { name: 'search_jira', description: 'Search Jira', input_schema: { type: 'object' } },
     ]);
