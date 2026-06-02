@@ -169,9 +169,9 @@ const PORT = process.env.PORT || 3000;
 // Only start listening if this file is run directly (not imported for testing)
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const startServer = async () => {
-    // Connect to MongoDB if using mongo backend
-    const storeBackend = process.env.STORE_BACKEND || 'json';
-    if (storeBackend === 'mongodb' || storeBackend === 'mongo') {
+    // Connect to database if using a database backend
+    const storeBackend = (process.env.STORE_BACKEND || 'json').toLowerCase().trim();
+    if (['mongodb', 'mongo', 'atlas', 'documentdb'].includes(storeBackend)) {
       try {
         await connectDb();
         await bootstrapSuperAdmin();
