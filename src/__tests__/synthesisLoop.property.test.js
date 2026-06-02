@@ -15,7 +15,8 @@ vi.mock('../tools/index.js', () => ({
 
 // Mock the skillLoader module (imported by agentLoop.js)
 vi.mock('../skillLoader.js', () => ({
-  loadSkillsById: vi.fn(() => []),
+  getSkillSummary: vi.fn(() => null),
+  getRegistryTriggers: vi.fn(() => new Map()),
 }));
 
 import { streamMessage } from '../llm.js';

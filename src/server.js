@@ -14,6 +14,7 @@ import { connectDb, getDb } from './db.js';
 import { adminLoginHandler, bootstrapSuperAdmin, enhancedAuthMiddleware, adminMiddleware } from './adminAuth.js';
 import { conversationsRouter, createConversationIndexes } from './conversations.js';
 import adminRoutes from './adminRoutes.js';
+import adminInfraToggle from './adminInfraToggle.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -56,6 +57,9 @@ app.use('/api/conversations', enhancedAuthMiddleware, conversationsRouter);
 
 // Admin user management routes (protected + admin only)
 app.use('/api/admin/users', enhancedAuthMiddleware, adminMiddleware, adminRoutes);
+
+// Admin infra toggle route (protected + admin only)
+app.use('/api/admin/infra-toggle', enhancedAuthMiddleware, adminMiddleware, adminInfraToggle);
 
 // Chat endpoint with SSE streaming (protected)
 app.post('/api/chat', enhancedAuthMiddleware, async (req, res) => {

@@ -1,4 +1,53 @@
 import { BedrockRuntimeClient, InvokeModelCommand, InvokeModelWithResponseStreamCommand } from '@aws-sdk/client-bedrock-runtime';
+import { startGeneration, endGeneration } from './tracing.js';
+import { logLLMCall } from './logger.js';
+
+// --- Tracing Context ---
+
+/**
+ * Module-level active trace and context used by tracing hooks.
+ * Set by the agent loop at the start of each request via setActiveTrace/setActiveContext.
+ */
+let activeTrace = null;
+let activeContext = { session_id: '', request_id: '', client_tag: '' };
+
+/**
+ * Set the active LangFuse trace for the current request.
+ * Called by the agent loop at the start of each request.
+ * @param {object|null} trace - The trace object from createTrace(), or null to clear
+ */
+export function setActiveTrace(trace) {
+  activeTrace = trace;
+}
+
+/**
+ * Set the active request context for logging (session_id, request_id, client_tag).
+ * Called by the agent loop at the start of each request.
+ * @param {{ session_id?: string, request_id?: string, client_tag?: string }} ctx
+ */
+export function setActiveContext(ctx) {
+  activeContext = {
+    session_id: ctx.session_id || '',
+    request_id: ctx.request_id || '',
+    client_tag: ctx.client_tag || '',
+  };
+}
+
+/**
+ * Get the current active trace (for testing/inspection).
+ * @returns {object|null}
+ */
+export function getActiveTrace() {
+  return activeTrace;
+}
+
+/**
+ * Get the current active context (for testing/inspection).
+ * @returns {{ session_id: string, request_id: string, client_tag: string }}
+ */
+export function getActiveContext() {
+  return { ...activeContext };
+}
 
 // --- Error Classes ---
 
@@ -244,11 +293,60 @@ export async function createMessage({ model, system, messages, tools, maxTokens 
     body: JSON.stringify(requestBody),
   });
 
+  // Start tracing generation
+  const generation = activeTrace
+    ? startGeneration(activeTrace, {
+        model,
+        inputMessages: messages,
+        modelId: resolvedModelId,
+        clientTag: activeContext.client_tag,
+      })
+    : null;
+
+  const startTime = Date.now();
+
   try {
     const response = await client.send(command);
+    const latencyMs = Date.now() - startTime;
     const responseBody = JSON.parse(new TextDecoder().decode(response.body));
-    return normalizeResponse(responseBody);
+    const normalized = normalizeResponse(responseBody);
+
+    // End tracing generation with output and usage
+    if (generation) {
+      endGeneration(generation, normalized.content, normalized.usage);
+    }
+
+    // Structured logging for the LLM call
+    logLLMCall({
+      model,
+      input_tokens: normalized.usage.input_tokens,
+      output_tokens: normalized.usage.output_tokens,
+      latency_ms: latencyMs,
+      client_tag: activeContext.client_tag,
+      session_id: activeContext.session_id,
+      request_id: activeContext.request_id,
+    });
+
+    return normalized;
   } catch (error) {
+    const latencyMs = Date.now() - startTime;
+
+    // End generation with error info if tracing is active
+    if (generation) {
+      endGeneration(generation, { error: error.message }, { input_tokens: 0, output_tokens: 0 });
+    }
+
+    // Log the failed LLM call with zero tokens
+    logLLMCall({
+      model,
+      input_tokens: 0,
+      output_tokens: 0,
+      latency_ms: latencyMs,
+      client_tag: activeContext.client_tag,
+      session_id: activeContext.session_id,
+      request_id: activeContext.request_id,
+    });
+
     if (error instanceof LLMError) {
       throw error;
     }
@@ -418,10 +516,40 @@ export async function* streamMessage({ model, system, messages, tools, maxTokens
     body: JSON.stringify(requestBody),
   });
 
+  // Start tracing generation
+  const generation = activeTrace
+    ? startGeneration(activeTrace, {
+        model,
+        inputMessages: messages,
+        modelId: resolvedModelId,
+        clientTag: activeContext.client_tag,
+      })
+    : null;
+
+  const startTime = Date.now();
+
   let response;
   try {
     response = await client.send(command);
   } catch (error) {
+    const latencyMs = Date.now() - startTime;
+
+    // End generation with error info if tracing is active
+    if (generation) {
+      endGeneration(generation, { error: error.message }, { input_tokens: 0, output_tokens: 0 });
+    }
+
+    // Log the failed LLM call
+    logLLMCall({
+      model,
+      input_tokens: 0,
+      output_tokens: 0,
+      latency_ms: latencyMs,
+      client_tag: activeContext.client_tag,
+      session_id: activeContext.session_id,
+      request_id: activeContext.request_id,
+    });
+
     const llmError = error instanceof LLMError ? error : mapBedrockError(error);
     yield {
       type: 'error',
@@ -443,11 +571,51 @@ export async function* streamMessage({ model, system, messages, tools, maxTokens
         const normalizedEvents = normalizeStreamEvent(parsed, accumulator);
 
         for (const normalizedEvent of normalizedEvents) {
+          // When message completes, record tracing and logging
+          if (normalizedEvent.type === 'message_complete') {
+            const latencyMs = Date.now() - startTime;
+            const { response: completedResponse } = normalizedEvent;
+
+            // End tracing generation with output and usage
+            if (generation) {
+              endGeneration(generation, completedResponse.content, completedResponse.usage);
+            }
+
+            // Structured logging for the LLM call
+            logLLMCall({
+              model,
+              input_tokens: completedResponse.usage.input_tokens,
+              output_tokens: completedResponse.usage.output_tokens,
+              latency_ms: latencyMs,
+              client_tag: activeContext.client_tag,
+              session_id: activeContext.session_id,
+              request_id: activeContext.request_id,
+            });
+          }
+
           yield normalizedEvent;
         }
       }
     }
   } catch (error) {
+    const latencyMs = Date.now() - startTime;
+
+    // End generation with error info if tracing is active
+    if (generation) {
+      endGeneration(generation, { error: error.message }, accumulator.usage);
+    }
+
+    // Log the failed LLM call with whatever tokens were accumulated
+    logLLMCall({
+      model,
+      input_tokens: accumulator.usage.input_tokens,
+      output_tokens: accumulator.usage.output_tokens,
+      latency_ms: latencyMs,
+      client_tag: activeContext.client_tag,
+      session_id: activeContext.session_id,
+      request_id: activeContext.request_id,
+    });
+
     const llmError = error instanceof LLMError ? error : mapBedrockError(error);
     yield {
       type: 'error',

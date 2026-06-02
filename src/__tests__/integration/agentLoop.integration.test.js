@@ -7,7 +7,8 @@ vi.mock('../../llm.js', () => ({
   streamMessage: vi.fn(),
 }));
 vi.mock('../../skillLoader.js', () => ({
-  loadSkillsById: vi.fn(() => []),
+  getSkillSummary: vi.fn(() => null),
+  getRegistryTriggers: vi.fn(() => new Map()),
 }));
 vi.mock('../../tools/index.js', () => ({
   executeTool: vi.fn(),
@@ -35,9 +36,38 @@ vi.mock('../../db.js', () => {
   };
 });
 
+// Mock new modules added by skill-system-enhancement
+vi.mock('../../compaction.js', () => ({
+  shouldCompact: vi.fn(() => false),
+  compactHistory: vi.fn(),
+  buildCompactedContext: vi.fn(),
+  estimateTokenCount: vi.fn(() => 0),
+}));
+
+vi.mock('../../tracing.js', () => ({
+  createTrace: vi.fn(() => ({})),
+  startSpan: vi.fn(() => ({})),
+  endSpan: vi.fn(),
+  flushTracing: vi.fn(async () => {}),
+}));
+
+vi.mock('../../logger.js', () => ({
+  logLLMCall: vi.fn(),
+  logRequestComplete: vi.fn(),
+  logEvent: vi.fn(),
+}));
+
+vi.mock('../../clientTag.js', () => ({
+  extractClientTag: vi.fn(() => null),
+}));
+
+vi.mock('../../planManager.js', () => ({
+  listSessionPlans: vi.fn(() => []),
+}));
+
 import { createMessage, streamMessage } from '../../llm.js';
 import { executeTool, getToolDefinitions } from '../../tools/index.js';
-import { loadSkillsById } from '../../skillLoader.js';
+import { getSkillSummary } from '../../skillLoader.js';
 import { runAgentLoop } from '../../agentLoop.js';
 import { app } from '../../server.js';
 
@@ -199,7 +229,7 @@ describe('Integration: End-to-End Agent Loop', () => {
       });
 
       getToolDefinitions.mockReturnValue([]);
-      loadSkillsById.mockReturnValue([]);
+      getSkillSummary.mockReturnValue(null);
 
       // Synthesis stream returns a final text response
       streamMessage.mockReturnValue(createMockTextStream('Based on my research, here is the answer to your question.'));
@@ -312,7 +342,7 @@ describe('Integration: End-to-End Agent Loop', () => {
         return mockResearchResponse('jira');
       });
 
-      loadSkillsById.mockReturnValue([]);
+      getSkillSummary.mockReturnValue(null);
       getToolDefinitions.mockReturnValue([
         { name: 'search_jira', description: 'Search Jira issues', input_schema: { type: 'object', properties: { query: { type: 'string' } } } },
       ]);
@@ -418,7 +448,7 @@ describe('Integration: SSE Streaming from Express Server', () => {
       return mockResearchResponse('jira');
     });
 
-    loadSkillsById.mockReturnValue([]);
+    getSkillSummary.mockReturnValue(null);
     getToolDefinitions.mockReturnValue([]);
 
     // Synthesis: stream final text
@@ -510,7 +540,7 @@ describe('Integration: SSE Streaming from Express Server', () => {
       return mockResearchResponse('jira');
     });
 
-    loadSkillsById.mockReturnValue([]);
+    getSkillSummary.mockReturnValue(null);
     getToolDefinitions.mockReturnValue([
       { name: 'search_jira', description: 'Search Jira', input_schema: { type: 'object' } },
     ]);
