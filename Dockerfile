@@ -8,6 +8,7 @@ RUN npm ci --production
 COPY src/ ./src/
 COPY public/ ./public/
 COPY skills/ ./skills/
+COPY scripts/ ./scripts/
 
 EXPOSE 3000
 
